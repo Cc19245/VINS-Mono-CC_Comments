@@ -238,7 +238,7 @@ int main(int argc, char **argv)
                 ROS_INFO("load mask success");
         }
     }
-
+    
     // 这个向roscore注册订阅这个topic，收到一次message就执行一次回调函数
     ros::Subscriber sub_img = n.subscribe(IMAGE_TOPIC, 100, img_callback);
     // 注册一些publisher
