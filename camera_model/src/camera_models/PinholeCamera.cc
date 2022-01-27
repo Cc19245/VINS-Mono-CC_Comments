@@ -446,6 +446,10 @@ PinholeCamera::liftSphere(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
  * \param p image coordinates
  * \param P coordinates of the projective ray
  */
+//; 真正进行去畸变的函数，看一下14讲的去畸变是怎么进行的？我记得没有这么复杂啊
+//; 14讲去畸变的方式是整张图去畸变，也就是从畸变前的坐标出发，计算得到畸变后的坐标，然后把对应位置的像素值赋值
+//; 给畸变前的位置，这样的缺点是只能进行整张图的去畸变操作，而对于这种特征点的去畸变操作则不适用
+//; 所以这种对特征点进行去畸变的操作效率更高 
 void
 PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
 {
@@ -496,9 +500,11 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
             // 这里mx_d + du = 畸变后
             distortion(Eigen::Vector2d(mx_d, my_d), d_u);
             // Approximate value
-            mx_u = mx_d - d_u(0);
+            //; 注意这里用-是因为正向算得到的d_u是从畸变前到畸变后的增量，而递归取畸变是为了反向操作，所以要-
+            mx_u = mx_d - d_u(0);   
             my_u = my_d - d_u(1);
 
+            //; 递归8次进行去畸变操作
             for (int i = 1; i < n; ++i)
             {
                 distortion(Eigen::Vector2d(mx_u, my_u), d_u);

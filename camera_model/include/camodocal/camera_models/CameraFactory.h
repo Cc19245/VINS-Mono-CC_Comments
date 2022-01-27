@@ -6,9 +6,10 @@
 
 #include "camodocal/camera_models/Camera.h"
 
-namespace camodocal
+namespace camodocal  //; camodocal是鱼眼相机标定？
 {
 
+//; 工厂单例类，只能生成一个对象 
 class CameraFactory
 {
 public:

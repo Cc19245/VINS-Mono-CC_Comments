@@ -1,7 +1,10 @@
+<!--  EuRoc数据集的配置文件-->
 <launch>
     <arg name="config_path" default = "$(find feature_tracker)/../config/euroc/euroc_config.yaml" />
-	  <arg name="vins_path" default = "$(find feature_tracker)/../config/../" />
+    <arg name="vins_path" default = "$(find feature_tracker)/../config/../" />
     
+    <!-- name是启动的ros节点名称，这里可以对节点进行重命名；pkg是要启动的ros节点所属的功能包名；
+         type是要启动的ros节点对应的可执行文件的名称，因为一个功能包下可以有多个可执行文件（多个节点） -->
     <node name="feature_tracker" pkg="feature_tracker" type="feature_tracker" output="log">
         <param name="config_file" type="string" value="$(arg config_path)" />
         <param name="vins_folder" type="string" value="$(arg vins_path)" />

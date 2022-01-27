@@ -50,7 +50,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         pub_restart.publish(restart_flag);  // 告诉其他模块要重启了
         return;
     }
-    last_image_time = img_msg->header.stamp.toSec();
+    last_image_time = img_msg->header.stamp.toSec();    //; 更新最新一帧图像的时间戳
     // frequency control
     // 控制一下发给后端的频率
     if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)    // 保证发给后端的不超过这个频率
@@ -64,6 +64,8 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             pub_count = 0;
         }
     }
+    
+    
     else
         PUB_THIS_FRAME = false;
 
@@ -86,12 +88,14 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     else
         ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::MONO8);
 
+    //; 将ros的img转换为opencv中的mat
     cv::Mat show_img = ptr->image;
     TicToc t_r;
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
         ROS_DEBUG("processing camera %d", i);
-        if (i != 1 || !STEREO_TRACK)
+        if (i != 1 || !STEREO_TRACK)   //; 单目相机，i=0，因此就执行这个语句
+            //; readImage()函数就是真正进行光流追踪算法的函数
             trackerData[i].readImage(ptr->image.rowRange(ROW * i, ROW * (i + 1)), img_msg->header.stamp.toSec());
         else
         {
@@ -109,6 +113,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
 #endif
     }
 
+    //; i是遍历所有的特征点，把其中id=-1的特征点，也就是后来提取的特征点的id更新
     for (unsigned int i = 0;; i++)
     {
         bool completed = false;
@@ -122,6 +127,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
    if (PUB_THIS_FRAME)
    {
         pub_count++;    // 计数器更新
+        //; 点云消息，具体消息类型的定义还需要看ros的文档
         sensor_msgs::PointCloudPtr feature_points(new sensor_msgs::PointCloud);
         sensor_msgs::ChannelFloat32 id_of_point;
         sensor_msgs::ChannelFloat32 u_of_point;
@@ -130,7 +136,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         sensor_msgs::ChannelFloat32 velocity_y_of_point;
 
         feature_points->header = img_msg->header;
-        feature_points->header.frame_id = "world";
+        feature_points->header.frame_id = "world";   //; 点云的参考坐标系是世界坐标系
 
         vector<set<int>> hash_ids(NUM_OF_CAM);
         for (int i = 0; i < NUM_OF_CAM; i++)
@@ -219,11 +225,12 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "feature_tracker");   // ros节点初始化
     ros::NodeHandle n("~"); // 声明一个句柄，～代表这个节点的命名空间
     ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);    // 设置ros log级别
-    readParameters(n); // 读取配置文件
+    readParameters(n); // 读取配置文件，这里读入的是一些通用的配置文件配置参数
 
     for (int i = 0; i < NUM_OF_CAM; i++)
         trackerData[i].readIntrinsicParameter(CAM_NAMES[i]);    // 获得每个相机的内参
 
+    //; 如果是鱼眼相机才执行下面语句，一般不是鱼眼相机，所以不执行
     if(FISHEYE)
     {
         for (int i = 0; i < NUM_OF_CAM; i++)

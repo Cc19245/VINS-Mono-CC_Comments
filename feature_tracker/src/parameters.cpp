@@ -22,7 +22,7 @@ template <typename T>
 T readParam(ros::NodeHandle &n, std::string name)
 {
     T ans;
-    if (n.getParam(name, ans))
+    if (n.getParam(name, ans))  //; n.getParam是ros的内置函数，用来读入ROS的参数服务器中的参数
     {
         ROS_INFO_STREAM("Loaded " << name << ": " << ans);
     }
@@ -39,6 +39,7 @@ void readParameters(ros::NodeHandle &n)
 {
     std::string config_file;
     // 首先获得配置文件的路径
+    //; 这里的config_file就是ros参数服务器中的参数变量名称，最后得到的就是config.yaml文件的带路径的文件名
     config_file = readParam<std::string>(n, "config_file");
     // 使用opencv的yaml文件接口来读取文件
     cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
@@ -54,7 +55,7 @@ void readParameters(ros::NodeHandle &n)
     MIN_DIST = fsSettings["min_dist"];
     ROW = fsSettings["image_height"];
     COL = fsSettings["image_width"];
-    FREQ = fsSettings["freq"];
+    FREQ = fsSettings["freq"];  //; 这里的freq是发给后端的频率
     F_THRESHOLD = fsSettings["F_threshold"];
     SHOW_TRACK = fsSettings["show_track"];
     EQUALIZE = fsSettings["equalize"];  // 是否做均衡化处理
