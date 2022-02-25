@@ -15,13 +15,15 @@ ros::Publisher pub_keyframe_pose;
 ros::Publisher pub_keyframe_point;
 ros::Publisher pub_extrinsic;
 
-CameraPoseVisualization cameraposevisual(0, 1, 0, 1);
-CameraPoseVisualization keyframebasevisual(0.0, 0.0, 1.0, 1.0);
+CameraPoseVisualization cameraposevisual(0, 1, 0, 1);   //; 相机位姿可视化的对象
+CameraPoseVisualization keyframebasevisual(0.0, 0.0, 1.0, 1.0);     //; 关键帧可视化对象
 static double sum_of_path = 0;
 static Vector3d last_path(0.0, 0.0, 0.0);
 
+//; 注册后端节点的发布者
 void registerPub(ros::NodeHandle &n)
 {
+    //; 问题：下面注册了很多发布者，但是从ros节点图中并没有发现有这么多的发布话题？
     pub_latest_odometry = n.advertise<nav_msgs::Odometry>("imu_propagate", 1000);
     pub_path = n.advertise<nav_msgs::Path>("path", 1000);
     pub_relo_path = n.advertise<nav_msgs::Path>("relocalization_path", 1000);

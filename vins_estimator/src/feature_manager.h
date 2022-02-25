@@ -96,7 +96,7 @@ class FeatureManager
   private:
     double compensatedParallax2(const FeaturePerId &it_per_id, int frame_count);
     const Matrix3d *Rs;
-    Matrix3d ric[NUM_OF_CAM];
+    Matrix3d ric[NUM_OF_CAM]; //; 相机和IMU之间的外参
 };
 
 #endif

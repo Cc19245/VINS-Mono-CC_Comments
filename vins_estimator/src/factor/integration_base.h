@@ -9,15 +9,16 @@ using namespace Eigen;
 class IntegrationBase
 {
   public:
-    IntegrationBase() = delete;
+    IntegrationBase() = delete;     //; 注意这种写法的意思，应该是不能使用默认构造函数？
     IntegrationBase(const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                     const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
         : acc_0{_acc_0}, gyr_0{_gyr_0}, linearized_acc{_acc_0}, linearized_gyr{_gyr_0},
           linearized_ba{_linearized_ba}, linearized_bg{_linearized_bg},
-            jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 15, 15>::Zero()},
+          jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 15, 15>::Zero()},
           sum_dt{0.0}, delta_p{Eigen::Vector3d::Zero()}, delta_q{Eigen::Quaterniond::Identity()}, delta_v{Eigen::Vector3d::Zero()}
 
     {
+        //; 注意这里是18*18，因为使用中值积分
         noise = Eigen::Matrix<double, 18, 18>::Zero();
         noise.block<3, 3>(0, 0) =  (ACC_N * ACC_N) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(3, 3) =  (GYR_N * GYR_N) * Eigen::Matrix3d::Identity();
@@ -138,6 +139,7 @@ class IntegrationBase
 
     }
 
+    //; 传播函数
     void propagate(double _dt, const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1)
     {
         dt = _dt;
@@ -149,6 +151,7 @@ class IntegrationBase
         Vector3d result_linearized_ba;
         Vector3d result_linearized_bg;
 
+        //; 中值积分，真正实现预积分的函数
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
                             linearized_ba, linearized_bg,
                             result_delta_p, result_delta_q, result_delta_v,
@@ -159,11 +162,12 @@ class IntegrationBase
         delta_p = result_delta_p;
         delta_q = result_delta_q;
         delta_v = result_delta_v;
-        linearized_ba = result_linearized_ba;
+        linearized_ba = result_linearized_ba;   //; 这里可见bias不发生改变
         linearized_bg = result_linearized_bg;
         delta_q.normalize();
         sum_dt += dt;
-        acc_0 = acc_1;
+
+        acc_0 = acc_1;  //; 这里更新上一帧的imu数据
         gyr_0 = gyr_1;  
      
     }
@@ -198,12 +202,15 @@ class IntegrationBase
     }
 
     double dt;
-    Eigen::Vector3d acc_0, gyr_0;
-    Eigen::Vector3d acc_1, gyr_1;
+    //; 因为使用中值积分，所以0和1分别存储这一帧和上一帧的加速度和角速度值
+    Eigen::Vector3d acc_0, gyr_0;   
+    Eigen::Vector3d acc_1, gyr_1;   
 
+    //; 这个存储的是什么？为什么是const变量？
     const Eigen::Vector3d linearized_acc, linearized_gyr;
     Eigen::Vector3d linearized_ba, linearized_bg;
 
+    //; 雅克比，协方差
     Eigen::Matrix<double, 15, 15> jacobian, covariance;
     Eigen::Matrix<double, 15, 15> step_jacobian;
     Eigen::Matrix<double, 15, 18> step_V;

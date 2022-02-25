@@ -64,7 +64,7 @@ class Estimator
 
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
-    Vector3d g;
+    Vector3d g;  //; 重力加速度
     MatrixXd Ap[2], backup_A;
     VectorXd bp[2], backup_b;
 
@@ -76,7 +76,7 @@ class Estimator
     Matrix3d Rs[(WINDOW_SIZE + 1)];
     Vector3d Bas[(WINDOW_SIZE + 1)];
     Vector3d Bgs[(WINDOW_SIZE + 1)];
-    double td;
+    double td;  //; 传感器时延估计
 
     Matrix3d back_R0, last_R, last_R0;
     Vector3d back_P0, last_P, last_P0;

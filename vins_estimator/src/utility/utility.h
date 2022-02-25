@@ -151,9 +151,10 @@ class FileSystemHelper
      * Recursively create directory if `path` not exists.
      * Return 0 if success.
      *****************************************************************************/
+    //; 静态成员函数，有什么作用？
     static int createDirectoryIfNotExists(const char *path)
     {
-        struct stat info;
+        struct stat info;   //; stat是标准库中的结构体？
         int statRC = stat(path, &info);
         if( statRC != 0 )
         {

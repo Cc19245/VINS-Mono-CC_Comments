@@ -9,7 +9,7 @@
 #include <fstream>
 
 const double FOCAL_LENGTH = 460.0;
-const int WINDOW_SIZE = 10;
+const int WINDOW_SIZE = 10;     //; 滑窗中图像帧的数量，这里强制设置成10了。但是在前端的代码中是读入进来的20，没用到
 const int NUM_OF_CAM = 1;
 const int NUM_OF_F = 1000;
 //#define UNIT_SPHERE_ERROR

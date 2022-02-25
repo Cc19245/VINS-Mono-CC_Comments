@@ -14,11 +14,12 @@ void Estimator::setParameter()
 {
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
-        tic[i] = TIC[i];
+        tic[i] = TIC[i];    //; tic ric是类成员变量
         ric[i] = RIC[i];
     }
-    f_manager.setRic(ric);
+    f_manager.setRic(ric);  //; FeatureManager这个类中也有相机和IMU外参的类成员变量
     // 这里可以看到虚拟相机的用法
+    //; 下面这些变量和残差的信息矩阵有关，所以factor这个文件夹下的文件暂时可以理解成系数
     ProjectionFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTdFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     td = TD;
@@ -96,16 +97,18 @@ void Estimator::clearState()
  */
 void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
-    if (!first_imu)
+    if (!first_imu)    //; 成员变量，是否是第一帧imu数据
     {
         first_imu = true;
-        acc_0 = linear_acceleration;
+        acc_0 = linear_acceleration;   //; 上一帧imu数据值，这里第一次imu数据就把上一帧imu数据赋值成当前帧
         gyr_0 = angular_velocity;
     }
     // 滑窗中保留11帧，frame_count表示现在处理第几帧，一般处理到第11帧时就保持不变了
     // 由于预积分是帧间约束，因此第1个预积分量实际上是用不到的
+    //; frame_count是类成员变量，指示滑窗中存在多少帧图像
     if (!pre_integrations[frame_count])
     {
+        //; 存储预积分类指针的数组
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
     // 所以只有大于0才处理

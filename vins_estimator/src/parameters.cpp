@@ -8,7 +8,7 @@ double GYR_N, GYR_W;
 std::vector<Eigen::Matrix3d> RIC;
 std::vector<Eigen::Vector3d> TIC;
 
-Eigen::Vector3d G{0.0, 0.0, 9.8};
+Eigen::Vector3d G{0.0, 0.0, 9.8};   //; 全局重力，和Z轴对齐
 
 double BIAS_ACC_THRESHOLD;
 double BIAS_GYR_THRESHOLD;
@@ -54,7 +54,7 @@ void readParameters(ros::NodeHandle &n)
     SOLVER_TIME = fsSettings["max_solver_time"];    // 单次优化最大求解时间
     NUM_ITERATIONS = fsSettings["max_num_iterations"];  // 单词优化最大迭代次数
     MIN_PARALLAX = fsSettings["keyframe_parallax"]; // 根据视差确定关键帧
-    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
+    MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH; //; 这里又除以了虚拟焦距，为什么？
 
     std::string OUTPUT_PATH;
     fsSettings["output_path"] >> OUTPUT_PATH;
@@ -78,6 +78,7 @@ void readParameters(ros::NodeHandle &n)
     ROS_INFO("ROW: %f COL: %f ", ROW, COL);
 
     ESTIMATE_EXTRINSIC = fsSettings["estimate_extrinsic"];
+    //; 没有外参的先验信息，需要进行在线外参标定
     if (ESTIMATE_EXTRINSIC == 2)
     {
         ROS_WARN("have no prior about extrinsic param, calibrate extrinsic param");
@@ -88,11 +89,13 @@ void readParameters(ros::NodeHandle &n)
     }
     else 
     {
+        //; 有一个相对准确的外参数据，不用在线标定外参初值，但是后端优化中仍旧需要优化外参
         if ( ESTIMATE_EXTRINSIC == 1)
         {
             ROS_WARN(" Optimize extrinsic param around initial guess!");
             EX_CALIB_RESULT_PATH = OUTPUT_PATH + "/extrinsic_parameter.csv";
         }
+        //; 外参绝对准确，后端优化中也不优化外参
         if (ESTIMATE_EXTRINSIC == 0)
             ROS_WARN(" fix extrinsic param ");
 
@@ -104,7 +107,7 @@ void readParameters(ros::NodeHandle &n)
         cv::cv2eigen(cv_R, eigen_R);
         cv::cv2eigen(cv_T, eigen_T);
         Eigen::Quaterniond Q(eigen_R);
-        eigen_R = Q.normalized();
+        eigen_R = Q.normalized();   //; 这里不应该返回一个单位化之后的四元数吗？为什么接的是一个Matrix3d？
         RIC.push_back(eigen_R);
         TIC.push_back(eigen_T);
         ROS_INFO_STREAM("Extrinsic_R : " << std::endl << RIC[0]);
@@ -112,8 +115,8 @@ void readParameters(ros::NodeHandle &n)
         
     } 
 
-    INIT_DEPTH = 5.0;
-    BIAS_ACC_THRESHOLD = 0.1;
+    INIT_DEPTH = 5.0;   //; 初始化深度
+    BIAS_ACC_THRESHOLD = 0.1;   //; 这些是什么？
     BIAS_GYR_THRESHOLD = 0.1;
 
     // 传感器时间延时相关

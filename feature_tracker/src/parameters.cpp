@@ -31,7 +31,7 @@ T readParam(ros::NodeHandle &n, std::string name)
     else
     {
         ROS_ERROR_STREAM("Failed to load " << name);
-        n.shutdown();
+        n.shutdown();       //; 没有注意到这里，shutdown之后是整个节点就关闭了吗？
     }
     return ans;
 }
@@ -69,10 +69,10 @@ void readParameters(ros::NodeHandle &n)
         FISHEYE_MASK = VINS_FOLDER_PATH + "config/fisheye_mask.jpg";
     CAM_NAMES.push_back(config_file);
 
-    WINDOW_SIZE = 20;
+    WINDOW_SIZE = 20;       //; 这个是滑窗中图像帧的数量？
     STEREO_TRACK = false;
     FOCAL_LENGTH = 460;
-    PUB_THIS_FRAME = false;
+    PUB_THIS_FRAME = false;     //; 默认这一帧图像不发布
 
     if (FREQ == 0)
         FREQ = 100;
