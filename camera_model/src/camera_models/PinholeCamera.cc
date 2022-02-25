@@ -452,7 +452,7 @@ PinholeCamera::liftSphere(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
 //; 所以这种对特征点进行去畸变的操作效率更高 
 void
 PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) const
-{
+{   //; 输入二维向量p是像素坐标，输出三维向量P是相机归一化平面上的坐标，也就是Z始终是1
     double mx_d, my_d,mx2_d, mxy_d, my2_d, mx_u, my_u;
     double rho2_d, rho4_d, radDist_d, Dx_d, Dy_d, inv_denom_d;
     //double lambda;
@@ -462,11 +462,14 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
     mx_d = m_inv_K11 * p(0) + m_inv_K13;
     my_d = m_inv_K22 * p(1) + m_inv_K23;
 
+    //; 如果没有畸变，那么投影都归一化相机坐标系之后就完成了
     if (m_noDistortion)
     {
         mx_u = mx_d;
         my_u = my_d;
     }
+
+    //; 如果有畸变，那么就需要对这个点进行去畸变操作
     else
     {
         if (0)
@@ -497,7 +500,7 @@ PinholeCamera::liftProjective(const Eigen::Vector2d& p, Eigen::Vector3d& P) cons
             // Recursive distortion model
             int n = 8;
             Eigen::Vector2d d_u;
-            // 这里mx_d + du = 畸变后
+            //; 这里mx_d + du = 畸变后，也就是利用(mx_d, my_d)计算正向畸变得到d_u
             distortion(Eigen::Vector2d(mx_d, my_d), d_u);
             // Approximate value
             //; 注意这里用-是因为正向算得到的d_u是从畸变前到畸变后的增量，而递归取畸变是为了反向操作，所以要-
@@ -829,7 +832,7 @@ PinholeCamera::setParameters(const PinholeCamera::Parameters& parameters)
     {
         m_noDistortion = false;
     }
-
+    //; 提前计算一些值，方便后面计算
     m_inv_K11 = 1.0 / mParameters.fx();
     m_inv_K13 = -mParameters.cx() / mParameters.fx();
     m_inv_K22 = 1.0 / mParameters.fy();

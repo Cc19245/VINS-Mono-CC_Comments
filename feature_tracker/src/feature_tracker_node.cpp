@@ -1,3 +1,5 @@
+//; 2022/02/25 全部阅读完毕 
+
 #include <ros/ros.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/image_encodings.h>
@@ -9,21 +11,24 @@
 
 #include "feature_tracker.h"
 
-#define SHOW_UNDISTORTION 0
+#define SHOW_UNDISTORTION 0     //; 是否显示去畸变后的图像，这个主要用于验证递归去畸变算法的效果
 
+//; 以下三个变量好像没有使用
 vector<uchar> r_status;
 vector<float> r_err;
 queue<sensor_msgs::ImageConstPtr> img_buf;
 
+//; 发布者对象定义成全局变量，因为会在接收回调函数中进行消息发布，会调用这些对象
 ros::Publisher pub_img,pub_match;
 ros::Publisher pub_restart;
 
-FeatureTracker trackerData[NUM_OF_CAM];
-double first_image_time;
-int pub_count = 1;
-bool first_image_flag = true;
-double last_image_time = 0;
-bool init_pub = 0;
+FeatureTracker trackerData[NUM_OF_CAM];     //; 一个存储FeatureTracker对象的数组
+bool init_pub = 0;      //; 是否是第一次向后端发送数据的标志，0表示还没有向后端发送过数据
+int pub_count = 1;      //; 已经发送给后端的图片的张数
+bool first_image_flag = true;   //; 是否是第一张图片的标志
+double first_image_time;        //; 第一张图片的时间戳
+double last_image_time = 0;     //; 上一张图片的时间戳
+
 
 // 图片的回调函数
 void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
@@ -53,11 +58,14 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
     last_image_time = img_msg->header.stamp.toSec();    //; 更新最新一帧图像的时间戳
     // frequency control
     // 控制一下发给后端的频率
+    //; round是四舍五入取整
     if (round(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time)) <= FREQ)    // 保证发给后端的不超过这个频率
     {
         PUB_THIS_FRAME = true;
         // reset the frequency control
         // 这段时间的频率和预设频率十分接近，就认为这段时间很棒，重启一下，避免delta t太大
+        //; 主要就是当t累计的比较长的时候，变化就不敏感了，也就是此时即使一下发多张图片，计算出来的频率
+        //; 也不会突然变大。但是实际上此时一下给后端发送了多张图片，后端是处理不过来的
         if (abs(1.0 * pub_count / (img_msg->header.stamp.toSec() - first_image_time) - FREQ) < 0.01 * FREQ)
         {
             first_image_time = img_msg->header.stamp.toSec();
@@ -138,9 +146,10 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->header = img_msg->header;
         feature_points->header.frame_id = "world";   //; 点云的参考坐标系是世界坐标系
 
-        vector<set<int>> hash_ids(NUM_OF_CAM);
+        vector<set<int>> hash_ids(NUM_OF_CAM);      //; 干什么的？
         for (int i = 0; i < NUM_OF_CAM; i++)
         {
+            //; 下面这些引用得到的都是数组
             auto &un_pts = trackerData[i].cur_un_pts;   // 去畸变的归一化相机坐标系
             auto &cur_pts = trackerData[i].cur_pts; // 像素坐标
             auto &ids = trackerData[i].ids; // id
@@ -158,7 +167,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
                     p.z = 1;
                     // 利用这个ros消息的格式进行信息存储
                     feature_points->points.push_back(p);
-                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i);
+                    id_of_point.values.push_back(p_id * NUM_OF_CAM + i);    //; 这里就是特征点的id
                     u_of_point.values.push_back(cur_pts[j].x);
                     v_of_point.values.push_back(cur_pts[j].y);
                     velocity_x_of_point.values.push_back(pts_velocity[j].x);
@@ -173,6 +182,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         feature_points->channels.push_back(velocity_y_of_point);
         ROS_DEBUG("publish %f, at %f", feature_points->header.stamp.toSec(), ros::Time::now().toSec());
         // skip the first image; since no optical speed on frist image
+        //; 第一帧图片特征点没有速度，因此不发布
         if (!init_pub)
         {
             init_pub = 1;
@@ -183,6 +193,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
         // 可视化相关操作
         if (SHOW_TRACK)
         {
+            //; 需要把转化后的cv::Mat的图片再转成ros的图片
             ptr = cv_bridge::cvtColor(ptr, sensor_msgs::image_encodings::BGR8);
             //cv::Mat stereo_img(ROW * NUM_OF_CAM, COL, CV_8UC3);
             cv::Mat stereo_img = ptr->image;
@@ -214,7 +225,7 @@ void img_callback(const sensor_msgs::ImageConstPtr &img_msg)
             }
             //cv::imshow("vis", stereo_img);
             //cv::waitKey(5);
-            pub_match.publish(ptr->toImageMsg());
+            pub_match.publish(ptr->toImageMsg());   //; 向后端发布带有特征点的图像，主要用于显示用
         }
     }
     ROS_INFO("whole feature tracker processing costs: %f", t_r.toc());
@@ -225,9 +236,10 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "feature_tracker");   // ros节点初始化
     ros::NodeHandle n("~"); // 声明一个句柄，～代表这个节点的命名空间
     ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);    // 设置ros log级别
-    readParameters(n); // 读取配置文件，这里读入的是一些通用的配置文件配置参数
+    readParameters(n); //; 读取config.yaml配置文件，这里仅仅读取和相机有关的参数
 
     for (int i = 0; i < NUM_OF_CAM; i++)
+        //; CAM_NAMES[i]存的就是config.yaml, 这个简单理解就是生成了一个相机模型的指针，并读取了相机内参
         trackerData[i].readIntrinsicParameter(CAM_NAMES[i]);    // 获得每个相机的内参
 
     //; 如果是鱼眼相机才执行下面语句，一般不是鱼眼相机，所以不执行
@@ -249,8 +261,9 @@ int main(int argc, char **argv)
     // 这个向roscore注册订阅这个topic，收到一次message就执行一次回调函数
     ros::Subscriber sub_img = n.subscribe(IMAGE_TOPIC, 100, img_callback);
     // 注册一些publisher
+    //; 发布特征点信息，是后端真正可以使用到的数据
     pub_img = n.advertise<sensor_msgs::PointCloud>("feature", 1000); // 实际发出去的是 /feature_tracker/feature
-    pub_match = n.advertise<sensor_msgs::Image>("feature_img",1000);
+    pub_match = n.advertise<sensor_msgs::Image>("feature_img",1000);  //; 发送带有特征点的图像，用于显示用
     pub_restart = n.advertise<std_msgs::Bool>("restart",1000);
     /*
     if (SHOW_TRACK)

@@ -1,8 +1,10 @@
+//; 2022/02/25 全部阅读完毕 
+
 #include "parameters.h"
 
 std::string IMAGE_TOPIC;
 std::string IMU_TOPIC;
-std::vector<std::string> CAM_NAMES;
+std::vector<std::string> CAM_NAMES;     //; 相机的名称，里面存的就是config.yaml
 std::string FISHEYE_MASK;
 int MAX_CNT;
 int MIN_DIST;
@@ -47,8 +49,11 @@ void readParameters(ros::NodeHandle &n)
     {
         std::cerr << "ERROR: Wrong path to settings" << std::endl;
     }
+    //; 这个命名全用大写，但是实际就是一个局部变量，所以感觉这里命名不是很规范
     std::string VINS_FOLDER_PATH = readParam<std::string>(n, "vins_folder");
 
+    //; 以下这些变量全部用全局变量来存储。另外用了>>和=两种赋值写法，感觉也是不太规范
+    //; 另外注意这里仅仅读取了和相机有关的参数，IMU有关的参数都没有读取
     fsSettings["image_topic"] >> IMAGE_TOPIC;
     fsSettings["imu_topic"] >> IMU_TOPIC;
     MAX_CNT = fsSettings["max_cnt"];
@@ -58,7 +63,7 @@ void readParameters(ros::NodeHandle &n)
     FREQ = fsSettings["freq"];  //; 这里的freq是发给后端的频率
     F_THRESHOLD = fsSettings["F_threshold"];
     SHOW_TRACK = fsSettings["show_track"];
-    EQUALIZE = fsSettings["equalize"];  // 是否做均衡化处理
+    EQUALIZE = fsSettings["equalize"];  //; 是否做均衡化处理
     FISHEYE = fsSettings["fisheye"];
     if (FISHEYE == 1)
         FISHEYE_MASK = VINS_FOLDER_PATH + "config/fisheye_mask.jpg";

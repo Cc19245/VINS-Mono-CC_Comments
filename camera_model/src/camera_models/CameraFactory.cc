@@ -111,6 +111,7 @@ CameraFactory::generateCameraFromYamlFile(const std::string& filename)
         std::string sModelType;
         fs["model_type"] >> sModelType;
 
+        //; 注意写法，为什么要用boost库判断字符串是否相等？
         if (boost::iequals(sModelType, "kannala_brandt"))
         {
             modelType = Camera::KANNALA_BRANDT;

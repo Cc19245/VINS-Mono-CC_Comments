@@ -6,6 +6,7 @@
 #include <opencv2/core/core.hpp>
 #include <vector>
 
+//; odocal是正则表达式的意思？ camodocal是什么意思？
 namespace camodocal
 {
 
@@ -134,6 +135,7 @@ protected:
     cv::Mat m_mask;
 };
 
+//; 注意写法，这个应该是智能指针
 typedef boost::shared_ptr<Camera> CameraPtr;
 typedef boost::shared_ptr<const Camera> CameraConstPtr;
 

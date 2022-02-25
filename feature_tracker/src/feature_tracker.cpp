@@ -1,3 +1,5 @@
+//; 2022/02/25 全部阅读完毕 
+
 #include "feature_tracker.h"
 
 int FeatureTracker::n_id = 0;
@@ -102,7 +104,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
 {
     cv::Mat img;
     TicToc t_r;
-    cur_time = _cur_time;
+    cur_time = _cur_time;   //; 成员变量，时间戳
 
     //; 是否要进行图像均衡化，是EQUALIZE的值是从配置文件中读出来的
     if (EQUALIZE)
@@ -128,6 +130,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         forw_img = img;
     }
 
+    //; vector<cv::Point2f> forw_pts
     forw_pts.clear();   //; 当前帧光流追踪到的特征点，也是类成员变量
 
     if (cur_pts.size() > 0) // 上一帧有特征点，就可以进行光流追踪了
@@ -138,7 +141,8 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         // 调用opencv函数进行光流追踪
         // Step 1 通过opencv光流追踪给的状态位剔除outlier
         //; 形参分别是：上一帧图像，当前帧图像，上一帧光流追踪到的特征点，当前帧追踪后得到的特征点
-        //; status:上一帧的特征点在当前帧是否被成功追踪； err:错误vector?； cv::Size(21, 21) 是光流追踪的窗口大小
+        //; status:上一帧的特征点在当前帧是否被成功追踪； err:错误vector?； 
+        //; cv::Size(21, 21) 是光流追踪的窗口大小，因为光流是匹配特征点周围的一个patch的光度一致
         //; 3是金字塔层数，注意不算第0层，也就是实际上是3+1=4层
         cv::calcOpticalFlowPyrLK(cur_img, forw_img, cur_pts, forw_pts, status, err, cv::Size(21, 21), 3);
 
@@ -147,8 +151,12 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
             if (status[i] && !inBorder(forw_pts[i]))    // 追踪状态好检查在不在图像范围
                 status[i] = 0;
         reduceVector(prev_pts, status); // 没用到
+        //; 本次追踪结果把上一帧和上上帧的追踪结果也瘦身了，为什么？
         reduceVector(cur_pts, status);
         reduceVector(forw_pts, status);
+        //; 下面这些变量在本次光流追踪后并未赋值，查看在哪里赋值？
+        //; 注意：实际上这些变量都是上一帧追踪的特征点的属性，所以上一帧追踪后已经赋值了，这里只是把本次没有
+        //; 追踪到的哪些特征点的属性删除掉
         reduceVector(ids, status);  // 特征点的id
         reduceVector(cur_un_pts, status);   // 去畸变后的坐标
         reduceVector(track_cnt, status);    // 追踪次数
@@ -164,7 +172,9 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         // Step 3 通过对级约束来剔除outlier
         rejectWithF();
         ROS_DEBUG("set mask begins");
+
         TicToc t_m;
+        //; 设置mask的同时，把追踪次数较多且没有被mask覆盖的点保存起来了
         setMask();
         ROS_DEBUG("set mask costs %fms", t_m.toc());
 
@@ -172,7 +182,7 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
         TicToc t_t;
         //; 经过setMask对特征点进行均匀化之后，得到的forw_pts是追踪次数最多的特征点
         //; 此时可能提取的特征点少于要求的特征点数量，所以需要再提取一些
-        int n_max_cnt = MAX_CNT - static_cast<int>(forw_pts.size());
+        int n_max_cnt = MAX_CNT - static_cast<int>(forw_pts.size());    //; 这里为什么要static_cast处理？
         if (n_max_cnt > 0)
         {
             if(mask.empty())
@@ -204,8 +214,9 @@ void FeatureTracker::readImage(const cv::Mat &_img, double _cur_time)
     cur_img = forw_img; // 实际上是上一帧的图像
     cur_pts = forw_pts; // 上一帧的特征点
     //; 这里把所有的点再统一去一次畸变，还会计算光流追踪到的特征点的速度
+    //; 因为其实自始至终这些点都没有进行去畸变的操作，在rejectWithF()函数中是对局部变量进行去畸变，目的是为了计算F排除外点
     undistortedPoints();
-    prev_time = cur_time;
+    prev_time = cur_time;     //; 更新时间戳的时间变量
 }
 
 /**
@@ -220,9 +231,10 @@ void FeatureTracker::rejectWithF()
         ROS_DEBUG("FM ransac begins");
         TicToc t_f;
         //; 存储去畸变后的特征点？注意写法，括号里面的值应该是vector的长度 
-        //; 这里虽然写的是un，但是这里处理得到的并不是去畸变后的点，而是投影到虚拟相机中的像素坐标点,
         //; 而且这里只是一个局部变量，用于对极几何判断外点来使用，也就是得到status
         vector<cv::Point2f> un_cur_pts(cur_pts.size()), un_forw_pts(forw_pts.size());
+        
+        //; 遍历上一帧的特征点
         for (unsigned int i = 0; i < cur_pts.size(); i++)
         {
             Eigen::Vector3d tmp_p;
@@ -232,7 +244,9 @@ void FeatureTracker::rejectWithF()
             // 这里有个好处就是对F_THRESHOLD和相机无关
             // 投影到虚拟相机的像素坐标系
             //; 1.注意下面访问Eigen的Vector3d的写法，是.x()
-            //; 2.下面这个代码的具体操作意思？先从相机坐标系转到归一化坐标系，又从归一化坐标系转到虚拟相机的图像坐标系
+            //; 2.这里的操作就是先把像素坐标转到归一化相机平面，然后在归一化相机平面对特征点进行去畸变，
+            //;   然后又投影到像素坐标，得到像素平面上的去畸变后的像素坐标。
+            //; 为什么要按2.中的步骤这么去畸变呢？不能直接在像素坐标上进行去畸变处理吗？
             tmp_p.x() = FOCAL_LENGTH * tmp_p.x() / tmp_p.z() + COL / 2.0;
             tmp_p.y() = FOCAL_LENGTH * tmp_p.y() / tmp_p.z() + ROW / 2.0;
             un_cur_pts[i] = cv::Point2f(tmp_p.x(), tmp_p.y());
@@ -246,6 +260,8 @@ void FeatureTracker::rejectWithF()
         vector<uchar> status;
         // opencv接口计算本质矩阵，某种意义也是一种对级约束的outlier剔除
         //; F_THRESHOLD 是剔除外点的阈值，也就是匹配点离对极约束算出来的极线距离不能超过这个阈值
+        //; 另外这里就可以看出来为什么上一步光流追踪后要把上一帧的特征点也删除了，因为这里计算F矩阵的特征点
+        //; 必须是对应的
         cv::findFundamentalMat(un_cur_pts, un_forw_pts, cv::FM_RANSAC, F_THRESHOLD, 0.99, status);
         int size_a = cur_pts.size();
         reduceVector(prev_pts, status);
@@ -269,10 +285,11 @@ void FeatureTracker::rejectWithF()
  */
 bool FeatureTracker::updateID(unsigned int i)
 {
+    //; 输入的i是特征点在数组中的索引
     if (i < ids.size())
     {
         if (ids[i] == -1)
-            ids[i] = n_id++;
+            ids[i] = n_id++;   //; n_id是类的静态成员变量，需要在类外赋值，可以看成是一个全局变量
         return true;
     }
     else
@@ -282,10 +299,11 @@ bool FeatureTracker::updateID(unsigned int i)
 void FeatureTracker::readIntrinsicParameter(const string &calib_file)
 {
     ROS_INFO("reading paramerter of camera %s", calib_file.c_str());
-    // 读到的相机内参赋给m_camera
+    //; 读到的相机内参赋给m_camera, 里面的写法跳来跳去比较繁琐，暂时先不管
     m_camera = CameraFactory::instance()->generateCameraFromYamlFile(calib_file);
 }
 
+//; 显示去畸变的图像，应该是实验中验证递归去畸变算法的效果
 void FeatureTracker::showUndistortion(const string &name)
 {
     cv::Mat undistortedImg(ROW + 600, COL + 600, CV_8UC1, cv::Scalar(0));
@@ -326,7 +344,7 @@ void FeatureTracker::showUndistortion(const string &name)
 void FeatureTracker::undistortedPoints()
 {
     cur_un_pts.clear();
-    cur_un_pts_map.clear();
+    cur_un_pts_map.clear();     //; map<int, cv::Point2f> cur_un_pts_map;
     //cv::undistortPoints(cur_pts, un_pts, K, cv::Mat());
     for (unsigned int i = 0; i < cur_pts.size(); i++)
     {
