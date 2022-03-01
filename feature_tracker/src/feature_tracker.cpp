@@ -242,6 +242,8 @@ void FeatureTracker::rejectWithF()
             m_camera->liftProjective(Eigen::Vector2d(cur_pts[i].x, cur_pts[i].y), tmp_p);
             // 这里用一个虚拟相机，原因同样参考https://github.com/HKUST-Aerial-Robotics/VINS-Mono/issues/48
             // 这里有个好处就是对F_THRESHOLD和相机无关
+            //; 注意这里的解释很好，就是因为这里是进行判断外点，所以需要有一个像素阈值，因此投影到一个虚拟
+            //; 焦距的相机上之后，这个像素阈值就和相机焦距无关了，也就是和实际使用的相机无关了
             // 投影到虚拟相机的像素坐标系
             //; 1.注意下面访问Eigen的Vector3d的写法，是.x()
             //; 2.这里的操作就是先把像素坐标转到归一化相机平面，然后在归一化相机平面对特征点进行去畸变，

@@ -95,7 +95,7 @@ void Estimator::clearState()
  * @param[in] linear_acceleration 
  * @param[in] angular_velocity 
  */
-void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
+void Estimator::  processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     if (!first_imu)    //; 成员变量，是否是第一帧imu数据
     {
