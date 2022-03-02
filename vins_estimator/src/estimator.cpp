@@ -95,7 +95,7 @@ void Estimator::clearState()
  * @param[in] linear_acceleration 
  * @param[in] angular_velocity 
  */
-void Estimator::  processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
+void Estimator::processIMU(double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     if (!first_imu)    //; 成员变量，是否是第一帧imu数据
     {
@@ -109,27 +109,37 @@ void Estimator::  processIMU(double dt, const Vector3d &linear_acceleration, con
     if (!pre_integrations[frame_count])
     {
         //; 存储预积分类指针的数组
+        //; 传入的四个参数是上一帧的加速度、角速度、加速度零偏、角速度零偏
         pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
     }
     // 所以只有大于0才处理
     if (frame_count != 0)
     {
+        //; 1.存储当前帧传入的加速度、角速度数据 2.进行预积分传播
+        //; 但是注意这个函数中最后把acc_0和gyro_0更新成了当前帧的加速度和角速度值，这是bug吗？
+        //; 解答：不是！因为这个函数中更新的是预积分类IntegrationBase中的acc_0和gyro_0，而estimator类中也有一个acc_0和gyro_0，是在本程序后面更新的
         pre_integrations[frame_count]->push_back(dt, linear_acceleration, angular_velocity);
         //if(solver_flag != NON_LINEAR)
             // 这个量用来做初始化用的
+            //; tmp_pre_integration是一个预积分类指针，并不是一个vector，但是这里调用的也不是vector的push_back，而是预积分类中自定义的push_back函数
+            //; 注意：pre_integrations代表了滑窗中的关键帧，而tmp_pre_integration代表每一帧，包括关键帧和非关键帧
             tmp_pre_integration->push_back(dt, linear_acceleration, angular_velocity);
         // 保存传感器数据
+        //; 注意这里三个变量是estimator类成员变量，在预积分类中同样有这些成员变量
         dt_buf[frame_count].push_back(dt);
         linear_acceleration_buf[frame_count].push_back(linear_acceleration);
         angular_velocity_buf[frame_count].push_back(angular_velocity);
+
         // 又是一个中值积分，更新滑窗中状态量，本质是给非线性优化提供可信的初始值
+        //; 注意这里计算的是公式中的PVQ, 而不是预积分。这里积分的作用上面也说了，就是给后端优化提供较好的初始值
         int j = frame_count;         
-        Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;
+        //; 问题：去看Rs[j]是什么时候被赋初值的？
+        Vector3d un_acc_0 = Rs[j] * (acc_0 - Bas[j]) - g;  //; 这里Rs[j]就是公式中的Rw_bk
         Vector3d un_gyr = 0.5 * (gyr_0 + angular_velocity) - Bgs[j];
-        Rs[j] *= Utility::deltaQ(un_gyr * dt).toRotationMatrix();
+        Rs[j] *= Utility::deltaQ(un_gyr * dt).toRotationMatrix();   //; 这里更新了Rs, 也就是公式中的Rw_bk+1
         Vector3d un_acc_1 = Rs[j] * (linear_acceleration - Bas[j]) - g;
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
-        Ps[j] += dt * Vs[j] + 0.5 * dt * dt * un_acc;
+        Ps[j] += dt * Vs[j] + 0.5 * dt * dt * un_acc;   //; 注意这里用的就是Vs[j]，而不是平均值，这是位移公式决定的
         Vs[j] += dt * un_acc;
     }
     acc_0 = linear_acceleration;

@@ -13,7 +13,7 @@
 #include "utility/visualization.h"
 
 
-Estimator estimator;
+Estimator estimator;    // 全局变量，状态估计器对象
 
 std::condition_variable con;
 double current_time = -1;   //; 全局变量，current_time存储的是上一帧imu数据的时间戳
@@ -183,6 +183,7 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
     }
     last_imu_t = imu_msg->header.stamp.toSec();
     // 讲一下线程锁 条件变量用法
+    //; 注意这里是手动加锁，即在处理数据前std::mutex::lock,处理完数据之后在unlock
     m_buf.lock();   //; std::mutex m_buf;
     imu_buf.push(imu_msg);  //; queue<sensor_msgs::ImuConstPtr> imu_buf;
     m_buf.unlock();
@@ -271,8 +272,10 @@ void process()
         //; 应该是条件锁的意思，符合条件就唤醒process线程中的getMeasurements()函数
         con.wait(lk, [&]
                  {
-            return (measurements = getMeasurements()).size() != 0;
+                    return (measurements = getMeasurements()).size() != 0;
                  });
+        //; 能够执行到下面这一句，说明getMeasurements已经拿到数据了，所以本线程继续持有线程锁。
+        //; 但是下面会先处理拿到的数据，所以需要手动释放线程锁，给imu/feature回调线程继续塞数据
         lk.unlock();    // 数据buffer的锁解锁，回调可以继续塞数据了
         m_estimator.lock(); // 进行后端求解，不能和复位重启冲突
 
@@ -282,6 +285,7 @@ void process()
             auto img_msg = measurement.second;  //; 图像数据
             double dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0;
             // 遍历imu
+            // Step 1 首先处理所有的IMU数据，对IMU数据进行预积分
             for (auto &imu_msg : measurement.first)
             {
                 double t = imu_msg->header.stamp.toSec();   //; IMU数据的时间戳 
@@ -292,7 +296,7 @@ void process()
                         current_time = t;   //; 当前的imu时间
                     double dt = t - current_time;
                     ROS_ASSERT(dt >= 0);
-                    current_time = t;   //; current_time存储的是上一帧imu数据的时间戳
+                    current_time = t;       //; current_time存储的是上一帧imu数据的时间戳
                     dx = imu_msg->linear_acceleration.x;
                     dy = imu_msg->linear_acceleration.y;
                     dz = imu_msg->linear_acceleration.z;
@@ -303,7 +307,6 @@ void process()
                     //; 传入的三个变量分别是当前imu和上一帧imu的时间差，当前帧IMU的加速度，角速度
                     estimator.processIMU(dt, Vector3d(dx, dy, dz), Vector3d(rx, ry, rz));
                     //printf("imu: dt:%f a: %f %f %f w: %f %f %f\n",dt, dx, dy, dz, rx, ry, rz);
-
                 }
                 else    // 这就是针对最后一个imu数据，需要做一个简单的线性插值
                 {
@@ -326,6 +329,8 @@ void process()
                     //printf("dimu: dt:%f a: %f %f %f w: %f %f %f\n",dt_1, dx, dy, dz, rx, ry, rz);
                 }
             }
+
+            // Step 2 再检测是否有回环产生
             // set relocalization frame
             // 回环相关部分
             sensor_msgs::PointCloudConstPtr relo_msg = NULL;
@@ -357,6 +362,7 @@ void process()
 
             ROS_DEBUG("processing vision data with stamp %f \n", img_msg->header.stamp.toSec());
 
+            // Step 3 开始处理图像数据
             TicToc t_s;
             // 特征点id->特征点信息
             map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
@@ -377,8 +383,10 @@ void process()
                 xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
                 image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
             }
+            //; 处理图像数据的主函数
             estimator.processImage(image, img_msg->header);
 
+            // Step 4 主要工作基本完成，进行一些其他细节工作
             // 一些打印以及topic的发送
             double whole_t = t_s.toc();
             printStatistics(estimator, whole_t);
@@ -418,6 +426,7 @@ int main(int argc, char **argv)
     ROS_WARN("waiting for image and imu...");
 
     // 注册一些publisher
+    //; 注意这里面注册的很多publisher和实际看节点图对不上，注册的很多publisher在节点图中都没有
     registerPub(n);
     // 接受imu消息
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());

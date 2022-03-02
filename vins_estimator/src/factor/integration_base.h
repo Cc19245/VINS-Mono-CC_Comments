@@ -20,6 +20,10 @@ class IntegrationBase
     {
         //; 注意这里是18*18，因为使用中值积分
         noise = Eigen::Matrix<double, 18, 18>::Zero();
+        //; 下面是设置噪声的协方差矩阵，各个变量之间是相互独立的，所以实际上只有对角线上有协方差块。
+        //; ACC_N：加速度高斯白噪声的标准差    GYR_N：角速度的高斯白噪声的标准差
+        //; ACC_W：加速度的零偏是随机游走（维纳过程），导数服从高斯分布，其标准差为ACC_W。   GYR_W同理
+        //; 问题：这些标准差都是从配置文件中读出来的，那么这些值是从哪里来的呢？应该是数据集给出的，那么数据集是怎么给出的？标定它所使用的IMU得到的吗？
         noise.block<3, 3>(0, 0) =  (ACC_N * ACC_N) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(3, 3) =  (GYR_N * GYR_N) * Eigen::Matrix3d::Identity();
         noise.block<3, 3>(6, 6) =  (ACC_N * ACC_N) * Eigen::Matrix3d::Identity();
@@ -62,6 +66,7 @@ class IntegrationBase
             propagate(dt_buf[i], acc_buf[i], gyr_buf[i]);
     }
 
+    //; 中值积分实现IMU预积分的函数
     void midPointIntegration(double _dt, 
                             const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
                             const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1,
@@ -77,10 +82,14 @@ class IntegrationBase
         result_delta_q = delta_q * Quaterniond(1, un_gyr(0) * _dt / 2, un_gyr(1) * _dt / 2, un_gyr(2) * _dt / 2);
         Vector3d un_acc_1 = result_delta_q * (_acc_1 - linearized_ba);
         Vector3d un_acc = 0.5 * (un_acc_0 + un_acc_1);
+        //; 问题：这里的delta_v为什么不用平均值？解答：这里是公式的问题，不是中值积分的问题，匀加速运动变成变加速运动之后，
+        //; 只有公式中的1/2*a*dt*dt变成a(t)的积分，其他都是不变的。
         result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
         result_delta_v = delta_v + un_acc * _dt;
+        //; 零偏不发生改变
         result_linearized_ba = linearized_ba;
         result_linearized_bg = linearized_bg;         
+
         // 随后更新方差矩阵及雅克比
         if(update_jacobian)
         {
@@ -89,6 +98,7 @@ class IntegrationBase
             Vector3d a_1_x = _acc_1 - linearized_ba;
             Matrix3d R_w_x, R_a_0_x, R_a_1_x;
 
+            //; 以下三个是3d向量转反对称矩阵
             R_w_x<<0, -w_x(2), w_x(1),
                 w_x(2), 0, -w_x(0),
                 -w_x(1), w_x(0), 0;
@@ -100,6 +110,7 @@ class IntegrationBase
                 -a_1_x(1), a_1_x(0), 0;
 
             MatrixXd F = MatrixXd::Zero(15, 15);
+            //; block访问格式：F.block <长，宽>（起始x, 起始y）
             F.block<3, 3>(0, 0) = Matrix3d::Identity();
             F.block<3, 3>(0, 3) = -0.25 * delta_q.toRotationMatrix() * R_a_0_x * _dt * _dt + 
                                   -0.25 * result_delta_q.toRotationMatrix() * R_a_1_x * (Matrix3d::Identity() - R_w_x * _dt) * _dt * _dt;
@@ -133,10 +144,12 @@ class IntegrationBase
 
             //step_jacobian = F;
             //step_V = V;
+            //; 这里的雅克比是预积分量关于五个状态变量的导数，用于当偏差bias在后端优化后，使用一阶泰勒展开近似更新预积分量，避免重复计算预积分
             jacobian = F * jacobian;
+            //; 下面的协方差是误差状态更新的协方差，用于后端优化的时候的信息矩阵，作为误差的权重来使用。其实上面推导F和V主要就是为了
+            //; 更新下面的协方差矩阵。而上面同时使用F来更新预积分关于五个状态变量的雅克比只是一个副产品。
             covariance = F * covariance * F.transpose() + V * noise * V.transpose();
         }
-
     }
 
     //; 传播函数
@@ -151,25 +164,29 @@ class IntegrationBase
         Vector3d result_linearized_ba;
         Vector3d result_linearized_bg;
 
-        //; 中值积分，真正实现预积分的函数
+        //; 中值积分，真正实现预积分的函数，传入的参数如下：
+                        //; 时间间隔，上帧加速度，上帧角速度，本帧加速度，本帧角速度，上帧预积分p,上帧预积分q,上帧预积分v
         midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
+                        //; 上帧加速度零偏，上帧角速度零偏
                             linearized_ba, linearized_bg,
+                        //; 本次预积分p, 本帧预积分q, 本帧预积分v
                             result_delta_p, result_delta_q, result_delta_v,
+                        //; 本帧加速度零偏，本帧角速度零偏， 是否计算雅克比的标志
                             result_linearized_ba, result_linearized_bg, 1);
 
         //checkJacobian(_dt, acc_0, gyr_0, acc_1, gyr_1, delta_p, delta_q, delta_v,
         //                    linearized_ba, linearized_bg);
+        //; delta_p v q是预积分量，是预积分类的成员变量
         delta_p = result_delta_p;
         delta_q = result_delta_q;
         delta_v = result_delta_v;
-        linearized_ba = result_linearized_ba;   //; 这里可见bias不发生改变
+        linearized_ba = result_linearized_ba;   //; 这里可见在预积分的过程中bias不发生改变
         linearized_bg = result_linearized_bg;
-        delta_q.normalize();
+        delta_q.normalize();    //; 归一化，单位四元数才能表示旋转
         sum_dt += dt;
 
         acc_0 = acc_1;  //; 这里更新上一帧的imu数据
         gyr_0 = gyr_1;  
-     
     }
 
     // 计算和给定相邻帧状态量的残差
