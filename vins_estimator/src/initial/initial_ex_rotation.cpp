@@ -11,31 +11,39 @@ InitialEXRotation::InitialEXRotation(){
 // 标定imu和相机之间的旋转外参，通过imu和图像计算的旋转使用手眼标定计算获得
 bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> corres, Quaterniond delta_q_imu, Matrix3d &calib_ric_result)
 {
-    frame_count++;
+    frame_count++;     //; 注意这个是InitialEXRotation类的成员变量，不要搞混了
     // 根据特征关联求解两个连续帧相机的旋转R12
-    Rc.push_back(solveRelativeR(corres));
-    Rimu.push_back(delta_q_imu.toRotationMatrix());
+    Rc.push_back(solveRelativeR(corres));       //; 注意是camera2 到 camera1 的旋转
+    Rimu.push_back(delta_q_imu.toRotationMatrix()); //; 注意是从imu2 到 imu1 的旋转
     // 通过外参把imu的旋转转移到相机坐标系
+    //; 这里利用上一次求解的外参，把本次imu的预积分值，转化成本次相机到上一次相机的旋转，即camera2 到 camera1 的旋转
+    //; 这部分是用于鲁棒核函数的使用的
     Rc_g.push_back(ric.inverse() * delta_q_imu * ric);  // ric是上一次求解得到的外参
 
+    //; 这里是构造一个超定方程的系数矩阵
     Eigen::MatrixXd A(frame_count * 4, 4);
     A.setZero();
     int sum_ok = 0;
+    //; 问题1：为什么i从1开始？那么第0帧的旋转什么时候使用？
+    //; 问题2：另外从这里来看，是每插入一个关键帧，都利用从头到尾的所有关键帧组成A，计算一次外参？
     for (int i = 1; i <= frame_count; i++)
     {
-        Quaterniond r1(Rc[i]);
-        Quaterniond r2(Rc_g[i]);
+        //; 使用下面两个旋转就是为了实现核函数，也就是判断本次相机匹配计算的旋转如果太离谱，那么就降低它的权重
+        Quaterniond r1(Rc[i]);      //; 相机匹配计算的旋转
+        Quaterniond r2(Rc_g[i]);    //; 根据上一次计算的外参，和本次的IMU预积分旋转，计算相机之间的旋转
 
+        //; angularDistance是四元数的库函数，计算两个旋转之间的角度差（转成轴角，单位是弧度）
         double angular_distance = 180 / M_PI * r1.angularDistance(r2);
         ROS_DEBUG(
             "%d %f", i, angular_distance);
-        // 一个简单的核函数
+        //; 一个简单的核函数，
         double huber = angular_distance > 5.0 ? 5.0 / angular_distance : 1.0;
         ++sum_ok;
         Matrix4d L, R;
 
-        double w = Quaterniond(Rc[i]).w();
+        double w = Quaterniond(Rc[i]).w();  //; w是实部
         Vector3d q = Quaterniond(Rc[i]).vec();
+        //; 四元数转矩阵左右乘，注意这里使用的四元数是虚部在前，实部在后
         L.block<3, 3>(0, 0) = w * Matrix3d::Identity() + Utility::skewSymmetric(q);
         L.block<3, 1>(0, 3) = q;
         L.block<1, 3>(3, 0) = -q.transpose();
@@ -49,19 +57,25 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         R.block<1, 3>(3, 0) = -q.transpose();
         R(3, 3) = w;
 
+        //; 问题：这个huber的使用作用在超定方程上如何起作用不是特别明白，如果相差太大，那么huber参数就很小
+        //;      这样在矩阵中这部分就会变小，会如何影响最后的结果呢？
+        //; 解答：是否可以把一个大矩阵的问题想成很多小矩阵的最小二乘问题？这样huber参数作用的地方就相当于在
+        //;      最小二乘的这一项前面×了一个系数，这样就减少了它在损失函数中的占比
         A.block<4, 4>((i - 1) * 4, 0) = huber * (L - R);    // 作用在残差上面
     }
 
+    //; JacobiSVD是Eigen库中的内容
     JacobiSVD<MatrixXd> svd(A, ComputeFullU | ComputeFullV);
-    Matrix<double, 4, 1> x = svd.matrixV().col(3);
-    Quaterniond estimated_R(x);
-    ric = estimated_R.toRotationMatrix().inverse();
+    Matrix<double, 4, 1> x = svd.matrixV().col(3);      //; svd分解的最后一列
+    Quaterniond estimated_R(x);     //; 上面的公式分解得到的是Rcb? 和推导中不太一样
+    ric = estimated_R.toRotationMatrix().inverse(); //; 这里转成Rbc
     //cout << svd.singularValues().transpose() << endl;
     //cout << ric << endl;
     Vector3d ric_cov;
-    ric_cov = svd.singularValues().tail<3>();
+    ric_cov = svd.singularValues().tail<3>();   //; 得到奇异值的后面3个
     // 倒数第二个奇异值，因为旋转是3个自由度，因此检查一下第三小的奇异值是否足够大，通常需要足够的运动激励才能保证得到没有奇异的解
-    if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)
+    //; 在尾部3个奇异值中的索引是1，对应原来的奇异值就是第3个
+    if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)   
     {
         calib_ric_result = ric;
         return true;
@@ -70,6 +84,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
         return false;
 }
 
+//; 通过两帧图像匹配的特征点计算本质矩阵，并从本质矩阵中分解得到R12，也就是后一帧到前一帧的旋转变化
 Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>> &corres)
 {
     if (corres.size() >= 9)

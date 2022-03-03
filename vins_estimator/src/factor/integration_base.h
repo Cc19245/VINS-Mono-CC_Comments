@@ -86,7 +86,7 @@ class IntegrationBase
         //; 只有公式中的1/2*a*dt*dt变成a(t)的积分，其他都是不变的。
         result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
         result_delta_v = delta_v + un_acc * _dt;
-        //; 零偏不发生改变
+        //; 在预积分的过程中，由于时间间隔非常小，可以认为零偏不发生改变
         result_linearized_ba = linearized_ba;
         result_linearized_bg = linearized_bg;         
 
@@ -147,7 +147,7 @@ class IntegrationBase
             //; 这里的雅克比是预积分量关于五个状态变量的导数，用于当偏差bias在后端优化后，使用一阶泰勒展开近似更新预积分量，避免重复计算预积分
             jacobian = F * jacobian;
             //; 下面的协方差是误差状态更新的协方差，用于后端优化的时候的信息矩阵，作为误差的权重来使用。其实上面推导F和V主要就是为了
-            //; 更新下面的协方差矩阵。而上面同时使用F来更新预积分关于五个状态变量的雅克比只是一个副产品。
+            //; 更新下面的协方差矩阵。而上面同时使用F来更新预积分关于五个状态变量的雅克比只是一个副产品，并不是主要目的
             covariance = F * covariance * F.transpose() + V * noise * V.transpose();
         }
     }

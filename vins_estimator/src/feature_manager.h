@@ -90,6 +90,8 @@ class FeatureManager
     void removeBack();
     void removeFront(int frame_count);
     void removeOutlier();
+
+    //; 公共成员变量，比较重要
     list<FeaturePerId> feature;
     int last_track_num;
 

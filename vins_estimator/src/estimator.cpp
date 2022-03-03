@@ -153,10 +153,11 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     // Step 1 将特征点信息加到f_manager这个特征点管理器中，同时进行是否关键帧的检查
     if (f_manager.addFeatureCheckParallax(frame_count, image, td))
         // 如果上一帧是关键帧，则滑窗中最老的帧就要被移出滑窗
-        marginalization_flag = MARGIN_OLD;
+        //; marginalization_flag是类成员变量
+        marginalization_flag = MARGIN_OLD;    //; 0
     else
         // 否则移除上一帧
-        marginalization_flag = MARGIN_SECOND_NEW;
+        marginalization_flag = MARGIN_SECOND_NEW;  //; 1
 
     ROS_DEBUG("this frame is--------------------%s", marginalization_flag ? "reject" : "accept");
     ROS_DEBUG("%s", marginalization_flag ? "Non-keyframe" : "Keyframe");
@@ -164,17 +165,19 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     ROS_DEBUG("number of feature: %d", f_manager.getFeatureCount());
     Headers[frame_count] = header;
 
+    //! 下面的操作没有太看懂
     // all_image_frame用来做初始化相关操作，他保留滑窗起始到当前的所有帧
-    // 有一些帧会因为不是KF，被MARGIN_SECOND_NEW，但是及时较新的帧被margin，他也会保留在这个容器中，因为初始化要求使用所有的帧，而非只要KF
+    // 有一些帧会因为不是KF，被MARGIN_SECOND_NEW，但是即使较新的帧被margin，他也会保留在这个容器中，因为初始化要求使用所有的帧，而非只要KF
     ImageFrame imageframe(image, header.stamp.toSec());
-    imageframe.pre_integration = tmp_pre_integration;
+    imageframe.pre_integration = tmp_pre_integration;   //; tmp_pre_integration是类成员变量
     // 这里就是简单的把图像和预积分绑定在一起，这里预积分就是两帧之间的，滑窗中实际上是两个KF之间的
     // 实际上是准备用来初始化的相关数据
     all_image_frame.insert(make_pair(header.stamp.toSec(), imageframe));
+    //; 这里为什么又重新计算了预积分？
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
 
     // 没有外参初值
-    // Step 2： 外参初始化
+    // Step 2： 外参初始化，也就是进行外参标定
     if(ESTIMATE_EXTRINSIC == 2)
     {
         ROS_INFO("calibrating extrinsic param, rotation movement is needed");
@@ -182,14 +185,15 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         {
             // 这里标定imu和相机的旋转外参的初值
             // 因为预积分是相邻帧的约束，因为这里得到的图像关联也是相邻的
+            //; 下面就是利用这一帧和上一帧之间的特征点匹配进行外参标定
             vector<pair<Vector3d, Vector3d>> corres = f_manager.getCorresponding(frame_count - 1, frame_count);
             Matrix3d calib_ric;
             if (initial_ex_rotation.CalibrationExRotation(corres, pre_integrations[frame_count]->delta_q, calib_ric))
             {
                 ROS_WARN("initial extrinsic rotation calib success");
                 ROS_WARN_STREAM("initial extrinsic rotation: " << endl << calib_ric);
-                ric[0] = calib_ric;
-                RIC[0] = calib_ric;
+                ric[0] = calib_ric;     //; 这个ric是estimator的类成员变量，存储旋转外参
+                RIC[0] = calib_ric;     //; 这个RIC是parameter中的全局变量，存储旋转外参
                 // 标志位设置成可信的外参初值
                 ESTIMATE_EXTRINSIC = 1;
             }

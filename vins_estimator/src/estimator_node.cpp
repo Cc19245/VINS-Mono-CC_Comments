@@ -282,7 +282,7 @@ void process()
         // 给予范围的for循环，这里就是遍历每组image imu组合
         for (auto &measurement : measurements)
         {
-            auto img_msg = measurement.second;  //; 图像数据
+            auto img_msg = measurement.second;  //; 图像数据，实际上是前端处理得到的点云数据
             double dx = 0, dy = 0, dz = 0, rx = 0, ry = 0, rz = 0;
             // 遍历imu
             // Step 1 首先处理所有的IMU数据，对IMU数据进行预积分
@@ -364,17 +364,23 @@ void process()
 
             // Step 3 开始处理图像数据
             TicToc t_s;
-            // 特征点id->特征点信息
+            //; image的格式是：特征点id，[相机id,特征点信息（归一化相机坐标，像素坐标，速度）]。实际上单目相机id始终是0
+            //; 这里map的中的值为什么要用vector呢？这里image是局部变量，每次图像发来的所有特征点id不可能有重复的啊？
+            //; 所以说map中的键不会有重复的，这样每个键只可能对应一个值，那么值就没必要用vector啊？
             map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> image;
+            //; img_msg并不是图像， 而是前端处理后得到的点云数据
             for (unsigned int i = 0; i < img_msg->points.size(); i++)
             {
-                int v = img_msg->channels[0].values[i] + 0.5;
+                //; channels[0]存储的是特征点的id。但是这里没明白为什么+0.5，本来id就是int数啊？
+                //; 前端处理id的时候，公式是id = p_id * NUM_OF_CAM + i, pid是真正的特征点id, i是轮询相机的序号
+                int v = img_msg->channels[0].values[i] + 0.5;   
+                //; 所以下面取整得到特征点id, 取余得到相机的id
                 int feature_id = v / NUM_OF_CAM;
                 int camera_id = v % NUM_OF_CAM;
                 double x = img_msg->points[i].x;    // 去畸变后归一滑像素坐标
                 double y = img_msg->points[i].y;
                 double z = img_msg->points[i].z;
-                double p_u = img_msg->channels[1].values[i];    // 特征点像素坐标
+                double p_u = img_msg->channels[1].values[i];    //; 特征点像素坐标, 感觉这个没用？后面看看有没有用
                 double p_v = img_msg->channels[2].values[i];
                 double velocity_x = img_msg->channels[3].values[i]; // 特征点速度
                 double velocity_y = img_msg->channels[4].values[i];
@@ -383,7 +389,7 @@ void process()
                 xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
                 image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
             }
-            //; 处理图像数据的主函数
+            //; 处理图像数据的主函数，里面的步骤很多，非常重要！
             estimator.processImage(image, img_msg->header);
 
             // Step 4 主要工作基本完成，进行一些其他细节工作

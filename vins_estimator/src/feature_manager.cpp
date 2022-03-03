@@ -48,13 +48,14 @@ int FeatureManager::getFeatureCount()
 
 /**
  * @brief 增加特征点信息，同时检查上一帧是否时关键帧
+//; 好像有点不对？不应该是检查当前帧是否是关键帧吗？为什么是检测上一帧是否是关键帧？
  * 
  * @param[in] frame_count 
  * @param[in] image 
  * @param[in] td 
- * @return true 
- * @return false 
- */
+ * @return true   上一帧是关键帧
+ * @return false  上一帧不是关键帧
+ */   
 
 bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, double td)
 {
@@ -62,15 +63,23 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     ROS_DEBUG("num of feature: %d", getFeatureCount());
     double parallax_sum = 0;
     int parallax_num = 0;
-    last_track_num = 0;
+    last_track_num = 0;     //; 这是一个类成员变量
     // 遍历每个特征点
+    //; 下面的处理都围绕着类成员变量feature来进行，feature的数据结构是：list<FeaturePerId> feature
+    //; 也就是feature是一个数组，其中按照id不同存储了看到过的所有的特征点信息。
+    //; 另外FeaturePerId中还有一个数据结构是FeaturePerFrame，存储了看到过这个特征点的所有帧
+    //; 下面的处理就是把当前帧看到的特征点拿出来，看在feature中是否有这个id的特征点：
+    //;  1.如果没有这个特征点，那么就新生成一个FeaturePerId加入这个特征点；
+    //;  2.如果有这个特征点，那么就在FeaturePerFrame中加入当前帧对这个特征点的观测
     for (auto &id_pts : image)
     {
         // 用特征点信息构造一个对象
+        //; 从这里可以看出来，一直使用的是vector中的第0个数据
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
 
         int feature_id = id_pts.first;
         // 在已有的id中寻找是否是有相同的特征点
+        //; list<FeaturePerId> feature; feature是FeatureManager类的成员变量  
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
                           {
             return it.feature_id == feature_id;
@@ -100,6 +109,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         if (it_per_id.start_frame <= frame_count - 2 &&
             it_per_id.start_frame + int(it_per_id.feature_per_frame.size()) - 1 >= frame_count - 1)
         {
+            //; 计算视差，这个函数还需要仔细看一下
             parallax_sum += compensatedParallax2(it_per_id, frame_count);
             parallax_num++;
         }
@@ -114,6 +124,7 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         ROS_DEBUG("parallax_sum: %lf, parallax_num: %d", parallax_sum, parallax_num);
         ROS_DEBUG("current parallax: %lf", parallax_sum / parallax_num * FOCAL_LENGTH);
         // 看看平均视差是否超过一个阈值
+        //; 如果第8帧和第9帧的平均视差过大，则第9帧为关键帧
         return parallax_sum / parallax_num >= MIN_PARALLAX;
     }
 }

@@ -120,7 +120,7 @@ class Estimator
     vector<double *> last_marginalization_parameter_blocks;
 
     map<double, ImageFrame> all_image_frame;
-    IntegrationBase *tmp_pre_integration;
+    IntegrationBase *tmp_pre_integration;   //; 注意这个是一个预积分类的指针，也就是存储new返回的值，并不是一个数组
 
     //relocalization variable
     bool relocalization_info;
