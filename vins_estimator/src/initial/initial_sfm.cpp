@@ -186,7 +186,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	//cout << "init t_l " << T[l].transpose() << endl;
 
 	// 由于纯视觉slam处理都是Tcw,因此下面把Twc转成Tcw
-	//; 问题：去看十四讲，这里不转换就无法进行三角化求解吗？
+	//! 问题：去看十四讲，这里不转换就无法进行三角化求解吗？
 	//rotate to cam frame
 	Matrix3d c_Rotation[frame_num];
 	Vector3d c_Translation[frame_num];
@@ -320,7 +320,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		//; 添加要优化的参数块，数字是参数块的维度，其中旋转的更新比较特殊，所以要增加局部参数块local_parameterization
 		problem.AddParameterBlock(c_rotation[i], 4, local_parameterization);
 		problem.AddParameterBlock(c_translation[i], 3);
-		//; 问题：7个自由度不可观，这部分不是很明白
+		//! 问题：7个自由度不可观，这部分不是很明白
 		// 由于是单目视觉slam，有七个自由度不可观，因此，fix一些参数块避免在零空间漂移
 		// fix设置的世界坐标系第l帧的位姿，同时fix最后一帧的位移用来fix尺度
 		if (i == l)
@@ -331,7 +331,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		if (i == l || i == frame_num - 1)
 		{
 			//; 固定第l帧的平移，减少3个自由度。
-			//; 固定最后一帧的平移，减少1个自由度（固定尺度）？
+			//! 固定最后一帧的平移，减少1个自由度（固定尺度）？
 			problem.SetParameterBlockConstant(c_translation[i]);
 		}
 	}
