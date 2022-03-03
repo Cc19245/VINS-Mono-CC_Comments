@@ -33,8 +33,8 @@ void GlobalSFM::triangulatePoint(Eigen::Matrix<double, 3, 4> &Pose0, Eigen::Matr
 /**
  * @brief 根据上一帧的位姿通过pnp求解当前帧的位姿
  * 
- * @param[in] R_initial 上一帧的位姿
- * @param[in] P_initial 
+ * @param[in] R_initial 上一帧的旋转
+ * @param[in] P_initial 上一帧的平移
  * @param[in] i 	当前帧的索引
  * @param[in] sfm_f 	所有特征点的信息
  * @return true 
@@ -53,6 +53,7 @@ bool GlobalSFM::solveFrameByPnP(Matrix3d &R_initial, Vector3d &P_initial, int i,
 		Vector2d point2d;
 		for (int k = 0; k < (int)sfm_f[j].observation.size(); k++)
 		{
+			//; 如果能进入下面的if，说明这个特征点已经被三角化了，并且还能被当前帧看到，也就是可以进行PnP求解
 			if (sfm_f[j].observation[k].first == i)
 			{
 				Vector2d img_pts = sfm_f[j].observation[k].second;
@@ -64,6 +65,7 @@ bool GlobalSFM::solveFrameByPnP(Matrix3d &R_initial, Vector3d &P_initial, int i,
 			}
 		}
 	}
+	//; 为了提高PnP求解的精度，3D和2D点的匹配对要多一些
 	if (int(pts_2_vector.size()) < 15)
 	{
 		printf("unstable features tracking, please slowly move you device!\n");
@@ -71,11 +73,13 @@ bool GlobalSFM::solveFrameByPnP(Matrix3d &R_initial, Vector3d &P_initial, int i,
 			return false;
 	}
 	cv::Mat r, rvec, t, D, tmp_r;
-	cv::eigen2cv(R_initial, tmp_r);
-	cv::Rodrigues(tmp_r, rvec);
-	cv::eigen2cv(P_initial, t);
+	cv::eigen2cv(R_initial, tmp_r);	//; 上一帧的旋转
+	cv::Rodrigues(tmp_r, rvec);		//; 上一阵的旋转转成轴角
+	cv::eigen2cv(P_initial, t);		//; 上一帧的平移
+	//; 因为2d点都是在归一化相机平面上的，而求解PnP需要在像素平面上，所以这里内参矩阵直接设成单位帧
 	cv::Mat K = (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, 1, 0, 0, 0, 1);
 	bool pnp_succ;
+	//; OpenCV求解PnP的函数，需要去看一下
 	pnp_succ = cv::solvePnP(pts_3_vector, pts_2_vector, K, D, rvec, t, 1);
 	if(!pnp_succ)
 	{
@@ -90,7 +94,6 @@ bool GlobalSFM::solveFrameByPnP(Matrix3d &R_initial, Vector3d &P_initial, int i,
 	R_initial = R_pnp;
 	P_initial = T_pnp;
 	return true;
-
 }
 
 /**
@@ -166,7 +169,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 			  const Matrix3d relative_R, const Vector3d relative_T,
 			  vector<SFMFeature> &sfm_f, map<int, Vector3d> &sfm_tracked_points)
 {
-	feature_num = sfm_f.size();
+	feature_num = sfm_f.size();		//; 首先更新类的成员变量，也就是所有的特征点个数
 	//cout << "set 0 and " << l << " as known " << endl;
 	// have relative_r relative_t
 	// intial two view
@@ -183,15 +186,18 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	//cout << "init t_l " << T[l].transpose() << endl;
 
 	// 由于纯视觉slam处理都是Tcw,因此下面把Twc转成Tcw
+	//; 问题：去看十四讲，这里不转换就无法进行三角化求解吗？
 	//rotate to cam frame
 	Matrix3d c_Rotation[frame_num];
 	Vector3d c_Translation[frame_num];
 	Quaterniond c_Quat[frame_num];
+	//; 下面这个double数组是给ceres优化用的，因为ceres优化不认其他数据结构，只认double数据，所以要转成double数组
 	double c_rotation[frame_num][4];
 	double c_translation[frame_num][3];
 	Eigen::Matrix<double, 3, 4> Pose[frame_num];
 
 	// 将枢纽帧和最后一帧Twc转成Tcw，包括四元数，旋转矩阵，平移向量和增广矩阵
+	//; 注意下面只转化了Eigen数据类型的变量，给ceres优化使用的变量没有处理
 	c_Quat[l] = q[l].inverse();
 	c_Rotation[l] = c_Quat[l].toRotationMatrix();
 	c_Translation[l] = -1 * (c_Rotation[l] * T[l]);
@@ -212,6 +218,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	for (int i = l; i < frame_num - 1 ; i++)
 	{
 		// solve pnp
+		//; 这里主要是求解参考帧之后到最后一帧之前的那些关键帧的位姿
 		if (i > l)
 		{
 			// 这是依次求解，因此上一帧的位姿是已知量
@@ -219,6 +226,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 			Vector3d P_initial = c_Translation[i - 1];
 			if(!solveFrameByPnP(R_initial, P_initial, i, sfm_f))
 				return false;
+			//; 求解得到当前帧的旋转和平移，并且更新这些量
 			c_Rotation[i] = R_initial;
 			c_Translation[i] = P_initial;
 			c_Quat[i] = c_Rotation[i];
@@ -294,8 +302,10 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	// Step 5 求出了所有的位姿和3d点之后，进行一个视觉slam的global BA
 	// 可能需要介绍一下ceres  http://ceres-solver.org/
 	ceres::Problem problem;
+	//; 局部参数化，这里主要是为了定义优化变量的更新方式
 	ceres::LocalParameterization* local_parameterization = new ceres::QuaternionParameterization();
 	//cout << " begin full BA " << endl;
+	//; 注意frame_num是传入的形参，是滑窗中的关键帧的总数
 	for (int i = 0; i < frame_num; i++)
 	{
 		//double array for ceres
@@ -307,16 +317,21 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		c_rotation[i][1] = c_Quat[i].x();
 		c_rotation[i][2] = c_Quat[i].y();
 		c_rotation[i][3] = c_Quat[i].z();
+		//; 添加要优化的参数块，数字是参数块的维度，其中旋转的更新比较特殊，所以要增加局部参数块local_parameterization
 		problem.AddParameterBlock(c_rotation[i], 4, local_parameterization);
 		problem.AddParameterBlock(c_translation[i], 3);
+		//; 问题：7个自由度不可观，这部分不是很明白
 		// 由于是单目视觉slam，有七个自由度不可观，因此，fix一些参数块避免在零空间漂移
 		// fix设置的世界坐标系第l帧的位姿，同时fix最后一帧的位移用来fix尺度
 		if (i == l)
 		{
+			//; 固定第l帧的旋转，减少3个自由度
 			problem.SetParameterBlockConstant(c_rotation[i]);
 		}
 		if (i == l || i == frame_num - 1)
 		{
+			//; 固定第l帧的平移，减少3个自由度。
+			//; 固定最后一帧的平移，减少1个自由度（固定尺度）？
 			problem.SetParameterBlockConstant(c_translation[i]);
 		}
 	}
@@ -328,13 +343,15 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		// 遍历所有的观测帧，对这些帧建立约束
 		for (int j = 0; j < int(sfm_f[i].observation.size()); j++)
 		{
-			int l = sfm_f[i].observation[j].first;
+			int l = sfm_f[i].observation[j].first;	//; l是观测到这个3d点的关键帧的id
 			ceres::CostFunction* cost_function = ReprojectionError3D::Create(
+												//; 视觉观测，2d
 												sfm_f[i].observation[j].second.x(),
 												sfm_f[i].observation[j].second.y());
 				// 约束了这一帧位姿和3d地图点
     		problem.AddResidualBlock(cost_function, NULL, c_rotation[l], c_translation[l], 
-    								sfm_f[i].position);	 
+									//; 3d点坐标
+    								sfm_f[i].position);	 	
 		}
 
 	}
@@ -345,6 +362,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 	ceres::Solver::Summary summary;
 	ceres::Solve(options, &problem, &summary);
 	//std::cout << summary.BriefReport() << "\n";
+	//; 如果优化结果收敛，或者最后的损失函数已经很小了，那么优化成功
 	if (summary.termination_type == ceres::CONVERGENCE || summary.final_cost < 5e-03)
 	{
 		//cout << "vision only BA converge" << endl;
@@ -371,12 +389,12 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		T[i] = -1 * (q[i] * Vector3d(c_translation[i][0], c_translation[i][1], c_translation[i][2]));
 		//cout << "final  t" << " i " << i <<"  " << T[i](0) <<"  "<< T[i](1) <<"  "<< T[i](2) << endl;
 	}
+	//; 存储优化后的3d点的位置到输出变量中
 	for (int i = 0; i < (int)sfm_f.size(); i++)
 	{
 		if(sfm_f[i].state)
 			sfm_tracked_points[sfm_f[i].id] = Vector3d(sfm_f[i].position[0], sfm_f[i].position[1], sfm_f[i].position[2]);
 	}
 	return true;
-
 }
 

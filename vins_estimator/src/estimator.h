@@ -93,7 +93,7 @@ class Estimator
     int sum_of_outlier, sum_of_back, sum_of_front, sum_of_invalid;
 
     FeatureManager f_manager;
-    MotionEstimator m_estimator;
+    MotionEstimator m_estimator;        //; 运动估计器，根据两帧图像的匹配点计算R和t
     InitialEXRotation initial_ex_rotation;
 
     bool first_imu;

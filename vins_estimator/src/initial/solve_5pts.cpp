@@ -201,6 +201,7 @@ namespace cv {
 
 bool MotionEstimator::solveRelativeRT(const vector<pair<Vector3d, Vector3d>> &corres, Matrix3d &Rotation, Vector3d &Translation)
 {
+    //; 匹配点必须>15个才进行求解
     if (corres.size() >= 15)
     {
         vector<cv::Point2f> ll, rr;

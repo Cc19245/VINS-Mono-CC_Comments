@@ -75,6 +75,14 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
     ric_cov = svd.singularValues().tail<3>();   //; 得到奇异值的后面3个
     // 倒数第二个奇异值，因为旋转是3个自由度，因此检查一下第三小的奇异值是否足够大，通常需要足够的运动激励才能保证得到没有奇异的解
     //; 在尾部3个奇异值中的索引是1，对应原来的奇异值就是第3个
+    //! 问题：下面这个判断的依据没有很明白？
+    //! 解答：在手写VIO的课程中贺一佳博士给出了简单的解释：
+    //;      其实判断倒数第二维的奇异值是否>0.25，就是在判断A这个系数矩阵是不是一个好矩阵，即是否有比较好的数值稳定性
+    //;      比如在手写VIO的课程中有一个曲线拟合的问题，给定的数据噪声非常大，并且给定的数据段区间又比较小，这样
+    //;      进行曲线拟合的话得到的结果就非常不准确。解决方法要么降低噪声，要么增加数据拟合的区间段。
+    //;      这里是同样的道理，判断A的奇异值是否满足要求，就相当于判断A这个系数矩阵代表的运动是否是有效的
+    //;     （按照上面的解释，是否有足够的运动，运动足够大的时候，相当于降低了噪声的影响）。
+    //! 新的问题：阈值0.25可能是经验值不追究，为什么是判断倒数第2个奇异值呢？
     if (frame_count >= WINDOW_SIZE && ric_cov(1) > 0.25)   
     {
         calib_ric_result = ric;
@@ -87,6 +95,7 @@ bool InitialEXRotation::CalibrationExRotation(vector<pair<Vector3d, Vector3d>> c
 //; 通过两帧图像匹配的特征点计算本质矩阵，并从本质矩阵中分解得到R12，也就是后一帧到前一帧的旋转变化
 Matrix3d InitialEXRotation::solveRelativeR(const vector<pair<Vector3d, Vector3d>> &corres)
 {
+    //; 去看一下十四讲，这里为什么要>=9个点？
     if (corres.size() >= 9)
     {
         vector<cv::Point2f> ll, rr;

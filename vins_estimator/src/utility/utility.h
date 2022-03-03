@@ -66,16 +66,26 @@ class Utility
         ans.template block<3, 1>(1, 0) = pp.vec(), ans.template block<3, 3>(1, 1) = pp.w() * Eigen::Matrix<typename Derived::Scalar, 3, 3>::Identity() - skewSymmetric(pp.vec());
         return ans;
     }
-
+   
+    //; 旋转矩阵转yaw pitch roll，结果为角度制
     static Eigen::Vector3d R2ypr(const Eigen::Matrix3d &R)
     {
+        //; R = R(yaw) * R(pitch) * R(roll)， 即按照自身坐标系，ZYX的旋转顺序，对应角度分别是yaw pitch roll
         Eigen::Vector3d n = R.col(0);
         Eigen::Vector3d o = R.col(1);
         Eigen::Vector3d a = R.col(2);
-
+        
+        //; http://zhaoxuhui.top/blog/2018/03/13/RelationBetweenQ4&R&Euler.html（4.旋转矩阵转欧拉角有部分错误）
+        //; 旋转矩阵转欧拉角的公式：  
+        //;       [r11 r12 r13]
+        //;  R =  [r21 r22 r23]
+        //;       [r31 r32 r33]
+        //;  yaw = atan2(r21, r11)   （分子，分母）
+        //;  pitch = atan2(-r31, sqrt(r11^2+r21^2))  不太好，开根号有正负问题？
+        //;  roll = atan2(r32, r33)
         Eigen::Vector3d ypr(3);
         double y = atan2(n(1), n(0));
-        double p = atan2(-n(2), n(0) * cos(y) + n(1) * sin(y));
+        double p = atan2(-n(2), n(0) * cos(y) + n(1) * sin(y));  //; 这个写法好，没有正负问题
         double r = atan2(a(0) * sin(y) - a(1) * cos(y), -o(0) * sin(y) + o(1) * cos(y));
         ypr(0) = y;
         ypr(1) = p;

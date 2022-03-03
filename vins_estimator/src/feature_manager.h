@@ -48,10 +48,10 @@ class FeaturePerId
     int start_frame;
     vector<FeaturePerFrame> feature_per_frame;  // 该id对应的特征点在每个帧中的属性
 
-    int used_num;
+    int used_num;   //; 这个特征点被多少帧观测到
     bool is_outlier;
     bool is_margin;
-    double estimated_depth;
+    double estimated_depth;   //; 这个特征点的深度，是相对于第一次看到这个特征点的相机坐标系的
     int solve_flag; // 0 haven't solve yet; 1 solve succ; 2 solve fail;
 
     Vector3d gt_p;

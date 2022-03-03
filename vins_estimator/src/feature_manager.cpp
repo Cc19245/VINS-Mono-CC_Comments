@@ -30,6 +30,7 @@ void FeatureManager::clearState()
  * 
  * @return int 
  */
+//; 得到有效地图点的数目，实际有效地图点就是至少被两针观测到，而且最先观测到的关键帧在 WINDOW_SIZE - 2之前
 int FeatureManager::getFeatureCount()
 {
     int cnt = 0;
@@ -244,11 +245,12 @@ VectorXd FeatureManager::getDepthVector()
     int feature_index = -1;
     for (auto &it_per_id : feature)
     {
+        //; 这里又判断了一遍，其实在getFeatureCount()函数中已经判断过一遍了
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 #if 1
-        dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;
+        dep_vec(++feature_index) = 1. / it_per_id.estimated_depth;  //; estimated_depth默认设为-1
 #else
         dep_vec(++feature_index) = it_per_id->estimated_depth;
 #endif
@@ -259,31 +261,34 @@ VectorXd FeatureManager::getDepthVector()
 /**
  * @brief 利用观测到该特征点的所有位姿来三角化特征点
  * 
- * @param[in] Ps 
- * @param[in] tic 
- * @param[in] ric 
+ * @param[in] Ps   滑窗中的所有关键帧到枢纽帧的平移
+ * @param[in] tic  相机和IMU的平移外参, 调用的时候这里直接传入了0
+ * @param[in] ric  相机和IMU的旋转外参
  */
 void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
 {
     // 遍历每一个特征点
     for (auto &it_per_id : feature)
     {
+        //; 又判断了特征点是否有效
         it_per_id.used_num = it_per_id.feature_per_frame.size();
         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
             continue;
 
         if (it_per_id.estimated_depth > 0)  // 代表已经三角化过了
             continue;
+        //; imu_i是观测到这个特征点的起始帧
         int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
 
         ROS_ASSERT(NUM_OF_CAM == 1);
+        //; 这里还是构建超定矩阵A，然后svd分解得到3d点
         Eigen::MatrixXd svd_A(2 * it_per_id.feature_per_frame.size(), 4);
         int svd_idx = 0;
 
-        Eigen::Matrix<double, 3, 4> P0;
+        Eigen::Matrix<double, 3, 4> P0; //; 坐标变换矩阵
         // Twi -> Twc,第一个观察到这个特征点的KF的位姿
         Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
-        Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+        Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];    //; 又从imu系转到了相机系
         P0.leftCols<3>() = Eigen::Matrix3d::Identity();
         P0.rightCols<1>() = Eigen::Vector3d::Zero();
         // 遍历所有看到这个特征点的KF
@@ -293,36 +298,48 @@ void FeatureManager::triangulate(Vector3d Ps[], Vector3d tic[], Matrix3d ric[])
             // 得到该KF的相机坐标系位姿
             Eigen::Vector3d t1 = Ps[imu_j] + Rs[imu_j] * tic[0];
             Eigen::Matrix3d R1 = Rs[imu_j] * ric[0];
-            // T_w_cj -> T_c0_cj
+            // T_w_cj -> T_c0_cj  
+            //; 注意这里的c0是指第一次看到这个特征点的那个关键帧
+            //; T_c0_cj = T_w_c0^-1 * T_w_cj
+            //; 1.展开计算公式：
+            //;   [R_c0_cj   P_c0_cj] = [R_c0_w   -R_c0_w*P_w_c0] * [R_w_cj   P_w_cj]
+            //;   [  0          1   ] = [  0             1      ] * [  0         1  ]
+            //; 2.分别乘开：
+            //;    R_c0_cj = R_c0_w * R_w_cj
+            //;    P_c0_cj = R_c0_w * P_w_cj - R_c0_w*P_w_c0 = R_c0_w*(P_w_cj-P_w_c0)
             Eigen::Vector3d t = R0.transpose() * (t1 - t0);
             Eigen::Matrix3d R = R0.transpose() * R1;
             Eigen::Matrix<double, 3, 4> P;
             // T_c0_cj -> T_cj_c0相当于把c0当作世界系
+            //; 因为在视觉slam中都是使用Tcw，而不是使用Twc
             P.leftCols<3>() = R.transpose();
             P.rightCols<1>() = -R.transpose() * t;
+            //; 这个归一化就相当于把原来的归一化相机平面上的坐标，转成模长为1的坐标
+            //! 问题：为什么要这么做？是为了提高数值稳定性吗？
             Eigen::Vector3d f = it_per_frame.point.normalized();
             // 构建超定方程的其中两个方程
             svd_A.row(svd_idx++) = f[0] * P.row(2) - f[2] * P.row(0);
             svd_A.row(svd_idx++) = f[1] * P.row(2) - f[2] * P.row(1);
 
+            //; 这个判断貌似没有什么用啊？不论if满足不满足，都是继续执行下一次循环
             if (imu_i == imu_j)
                 continue;
         }
         ROS_ASSERT(svd_idx == svd_A.rows());
         Eigen::Vector4d svd_V = Eigen::JacobiSVD<Eigen::MatrixXd>(svd_A, Eigen::ComputeThinV).matrixV().rightCols<1>();
-        // 求解齐次坐标下的深度
+        // 求解齐次坐标下的深度，除以最后一维变成齐次坐标，然后z就是深度
         double svd_method = svd_V[2] / svd_V[3];
         //it_per_id->estimated_depth = -b / A;
         //it_per_id->estimated_depth = svd_V[2] / svd_V[3];
-        // 得到的深度值实际上就是第一个观察到这个特征点的相机坐标系下的深度值
+        //; 重要：得到的深度值实际上就是第一个观察到这个特征点的相机坐标系下的深度值
         it_per_id.estimated_depth = svd_method;
         //it_per_id->estimated_depth = INIT_DEPTH;
 
+        //; 特征点不可能离相机太近
         if (it_per_id.estimated_depth < 0.1)
         {
             it_per_id.estimated_depth = INIT_DEPTH; // 具体太近就设置成默认值
         }
-
     }
 }
 
