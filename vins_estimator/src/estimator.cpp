@@ -226,7 +226,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 // Step 5： 滑动窗口，移除边缘化的帧
                 slideWindow();
 
-                // Step 6： 移除无效地图点
+                // Step 6： 移除无效地图点，就是被三角化失败的点
                 f_manager.removeFailures(); // 移除无效地图点
                 ROS_INFO("Initialization finish!");
                 last_R = Rs[WINDOW_SIZE];   // 滑窗里最新的位姿
@@ -241,12 +241,15 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         else
             frame_count++;
     }
+    //; 进行初始化之后，后面都会进入else这个分支
     else
     {
         TicToc t_solve;
+        // Step 1 后端非线性优化，边缘化
         solveOdometry();
         ROS_DEBUG("solver costs: %fms", t_solve.toc());
-        // 检测VIO是否正常
+        
+        // Step 1.5 检测VIO是否正常
         if (failureDetection())
         {
             ROS_WARN("failure detection!");
@@ -259,9 +262,13 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         }
 
         TicToc t_margin;
+        // Step 2 滑窗，移除最老帧或者倒数第二帧
         slideWindow();
+
+        // Step 3 移除无效地图点，就是被三角化失败的点
         f_manager.removeFailures();
         ROS_DEBUG("marginalization costs: %fms", t_margin.toc());
+
         // prepare output of VINS
         // 给可视化用的
         key_poses.clear();
@@ -820,16 +827,19 @@ void Estimator::double2vector()
 
 bool Estimator::failureDetection()
 {
+    //; 追踪的地图点数量太少，视觉失效，整个VIO也就失效了
     if (f_manager.last_track_num < 2)   // 地图点数目是否足够
     {
         ROS_INFO(" little feature %d", f_manager.last_track_num);
         //return true;
     }
+    //; 加速度零偏太大，2.5 m/s^2
     if (Bas[WINDOW_SIZE].norm() > 2.5)  // 零偏是否正常
     {
         ROS_INFO(" big IMU acc bias estimation %f", Bas[WINDOW_SIZE].norm());
         return true;
     }
+    //; 陀螺仪零偏太大，1.0 rad/s = 57.3 °/s
     if (Bgs[WINDOW_SIZE].norm() > 1.0)
     {
         ROS_INFO(" big IMU gyr bias estimation %f", Bgs[WINDOW_SIZE].norm());
@@ -843,11 +853,13 @@ bool Estimator::failureDetection()
     }
     */
     Vector3d tmp_P = Ps[WINDOW_SIZE];
+    //; last_P是滑窗中上一帧的位姿，tmp_P是滑窗中最新帧的位姿，两个图像帧之间时间大约0.1s
     if ((tmp_P - last_P).norm() > 5)    // 两帧之间运动是否过大
     {
         ROS_INFO(" big translation");
         return true;
     }
+    //; 沿着重力方向运动过大，比如自由落体或者克服重力做功，一般不常见，所以也不正常
     if (abs(tmp_P.z() - last_P.z()) > 1)    // 重力方向运动是否过大
     {
         ROS_INFO(" big z translation");
@@ -857,6 +869,7 @@ bool Estimator::failureDetection()
     Matrix3d delta_R = tmp_R.transpose() * last_R;
     Quaterniond delta_Q(delta_R);
     double delta_angle;
+    //; 当前帧和上一帧的旋转角度过大
     delta_angle = acos(delta_Q.w()) * 2.0 / 3.14 * 180.0;
     if (delta_angle > 50)   // 两帧姿态变化是否过大
     {
@@ -1307,9 +1320,10 @@ void Estimator::slideWindow()
     if (marginalization_flag == MARGIN_OLD)
     {
         double t_0 = Headers[0].stamp.toSec();
+        //; 先备份一下将要被滑出窗口的老帧的位姿
         back_R0 = Rs[0];
         back_P0 = Ps[0];
-        // 必须是填满了滑窗才可以
+        // 必须是填满了滑窗才可以, 实际上这里是一定满足的，因为如果不填满滑窗，那么连初始化都无法完成
         if (frame_count == WINDOW_SIZE)
         {
             // 一帧一帧交换过去
@@ -1329,40 +1343,47 @@ void Estimator::slideWindow()
                 Bas[i].swap(Bas[i + 1]);
                 Bgs[i].swap(Bgs[i + 1]);
             }
-            // 最后一帧的状态量赋上当前值，最为初始值
+            // 最后一帧的状态量赋上当前值，最为初始值，因为下一次仅仅使用IMU进行状态变量的估计的时候，需要在最新的一帧的位姿的基础上进行推算
             Headers[WINDOW_SIZE] = Headers[WINDOW_SIZE - 1];
             Ps[WINDOW_SIZE] = Ps[WINDOW_SIZE - 1];
             Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
             Rs[WINDOW_SIZE] = Rs[WINDOW_SIZE - 1];
             Bas[WINDOW_SIZE] = Bas[WINDOW_SIZE - 1];
             Bgs[WINDOW_SIZE] = Bgs[WINDOW_SIZE - 1];
-            // 预积分量就得置零
+            // 预积分量就得置零，这里就是直接删除掉预积分类这个指针
             delete pre_integrations[WINDOW_SIZE];
+            //; 用最近的一些变量来新生成一个预积分类，然后等待最新的IMU数据到来，进行下一次的预积分
             pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
-            // buffer清空，等待新的数据来填
+            // buffer清空，等待新的数据来填，这里主要是等待新的IMU数据到来
             dt_buf[WINDOW_SIZE].clear();
             linear_acceleration_buf[WINDOW_SIZE].clear();
-            angular_velocity_buf[WINDOW_SIZE].clear();
+            angular_velocity_buf[WINDOW_SIZE].clear(); 
+
             // 清空all_image_frame最老帧之前的状态
+            //; 1.这个肯定会进来啊？判断solver_flag还有什么意义
+            //; 2.下面这个操作其实和初始化有关系，因为处理的是all_image_frame
             if (true || solver_flag == INITIAL)
             {
                 // 预积分量是堆上的空间，因此需要手动释放
                 map<double, ImageFrame>::iterator it_0;
-                it_0 = all_image_frame.find(t_0);
-                delete it_0->second.pre_integration;
-                it_0->second.pre_integration = nullptr;
- 
+                //; 找到滑出滑窗的最老帧在all_image_frame中的位置
+                it_0 = all_image_frame.find(t_0);  
+                //; 释放堆上面的空间，下面两步缺一不可（所以推荐使用智能指针）
+                delete it_0->second.pre_integration;    //; 1.删除指针，否则会导致内存泄漏
+                it_0->second.pre_integration = nullptr; //; 2.赋值空指针，否则会导致野指针出现，程序运行可能会带来不可预知的错误
+                //; 把all_image_frame中滑出滑窗的帧之前的所有帧都删掉
                 for (map<double, ImageFrame>::iterator it = all_image_frame.begin(); it != it_0; ++it)
                 {
                     if (it->second.pre_integration)
                         delete it->second.pre_integration;
                     it->second.pre_integration = NULL;
                 }
-                // 释放完空间之后再erase
+                // 释放完空间之后再erase，不能直接erase，否则会导致内存泄漏现象
                 all_image_frame.erase(all_image_frame.begin(), it_0);
                 all_image_frame.erase(t_0);
 
             }
+            //; 之前一直没有对地图点进行操作，这里对地图点进行操作
             slideWindowOld();
         }
     }
@@ -1371,6 +1392,10 @@ void Estimator::slideWindow()
         if (frame_count == WINDOW_SIZE)
         {
             // 将最后两个预积分观测合并成一个
+            //; dt_buf[frame_count]是最后一帧图像对应的所有的IMU值，
+            //; dt_buf[frame_count-1]是倒数第二帧（被边缘化掉的）图像对应的所有的IMU值，
+            //; 所以这里把两个预积分合成一个，就是把最后一帧图像的IMU值加入到倒数第二帧的IMU值中，
+            //; 然后重新进行传播，计算预积分、协方差等
             for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)
             {
                 double tmp_dt = dt_buf[frame_count][i];
@@ -1390,8 +1415,10 @@ void Estimator::slideWindow()
             Rs[frame_count - 1] = Rs[frame_count];
             Bas[frame_count - 1] = Bas[frame_count];
             Bgs[frame_count - 1] = Bgs[frame_count];
+
             // reset最新预积分量
             delete pre_integrations[WINDOW_SIZE];
+            //; 这里不new的话就要赋值成nullptr，否则会产生也野指针的问题
             pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
             // clear相关buffer
             dt_buf[WINDOW_SIZE].clear();
@@ -1410,8 +1437,11 @@ void Estimator::slideWindowNew()
     sum_of_front++;
     f_manager.removeFront(frame_count);
 }
+
+
 // real marginalization is removed in solve_ceres()
 // 由于地图点是绑定在第一个看见它的位姿上的，因此需要对被移除的帧看见的地图点进行解绑，以及每个地图点的首个观测帧id减1
+//; 这里的解绑就是把地图点绑定到看到这个地图点的第1帧上（假设上一次被滑出滑窗的是看到这个地图点的第0帧）
 void Estimator::slideWindowOld()
 {
     sum_of_back++;
@@ -1422,13 +1452,17 @@ void Estimator::slideWindowOld()
         Matrix3d R0, R1;
         Vector3d P0, P1;
         // back_R0 back_P0是被移除的帧的位姿
-        R0 = back_R0 * ric[0];  // 被移除的相机的姿态
-        R1 = Rs[0] * ric[0];    // 当前最老的相机姿态
-        P0 = back_P0 + back_R0 * tic[0];    // 被移除的相机的位置
-        P1 = Ps[0] + Rs[0] * tic[0];    // 当前最老的相机位置
+        //; 下面的操作就是计算 移除滑出的帧 和 当前滑窗中的第0帧 的相机系位姿，
+        //; 因为滑窗中维护的都是IMU系的位姿，而和3d点有关的是在相机系下的位姿
+        R0 = back_R0 * ric[0];  // 上一次被移除的相机的姿态
+        R1 = Rs[0] * ric[0];    // 当前滑窗中最老的相机姿态
+        P0 =  + back_R0 * tic[0];    // 被移除的相机的位置
+        P1 = Psback_P0[0] + Rs[0] * tic[0];    // 当前最老的相机位置
+
         // 下面要做的事情把被移除帧看见地图点的管理权交给当前的最老帧
         f_manager.removeBackShiftDepth(R0, P0, R1, P1);
     }
+    //; 还没有初始化结束
     else
         f_manager.removeBack();
 }

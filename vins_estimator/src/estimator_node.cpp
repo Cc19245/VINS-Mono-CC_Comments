@@ -102,12 +102,13 @@ void update()
     tmp_Bg = estimator.Bgs[WINDOW_SIZE];
     acc_0 = estimator.acc_0;
     gyr_0 = estimator.gyr_0;
-
+    
+    //; 这里tmp_imu_buf就是当前帧图像后面的哪些imu数据，因为下一次的图像帧数据还没有来,
+    //; 因此这些IMU数据就没有进行预积分操作，这里就单纯利用这些imu数据进行一个当前最新位姿的推算
     queue<sensor_msgs::ImuConstPtr> tmp_imu_buf = imu_buf;  // 遗留的imu的buffer，因为下面需要pop，所以copy了一份
     for (sensor_msgs::ImuConstPtr tmp_imu_msg; !tmp_imu_buf.empty(); tmp_imu_buf.pop())
         // 得到最新imu时刻的可靠的位姿
         predict(tmp_imu_buf.front());
-
 }
 
 // 获得匹配好的图像imu组
@@ -392,7 +393,7 @@ void process()
             //; 处理图像数据的主函数，里面的步骤很多，非常重要！
             estimator.processImage(image, img_msg->header);
 
-            // Step 4 主要工作基本完成，进行一些其他细节工作
+            // Step 4 主要工作基本完成，进行一些其他细节工作，主要是发布ros topic，用于ros的可视化
             // 一些打印以及topic的发送
             double whole_t = t_s.toc();
             printStatistics(estimator, whole_t);
@@ -412,6 +413,8 @@ void process()
         m_estimator.unlock();
         m_buf.lock();
         m_state.lock();
+        //; 如果当前后端求解器已经进入了非线性优化阶段（即初始化已经完成），那么还要更新一下本文件中的全局位姿变量
+        //; 主要是用于基于滑出中最新帧的位姿完全依靠IMU的当前最新位姿推算，就是为了得到一个比较高频的位姿信息
         if (estimator.solver_flag == Estimator::SolverFlag::NON_LINEAR)
             update();
         m_state.unlock();

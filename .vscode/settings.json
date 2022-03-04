@@ -139,7 +139,8 @@
 		"memory_resource": "cpp",
 		"random": "cpp",
 		"jacobi": "cpp",
-		"core": "cpp"
+		"core": "cpp",
+		"*.ipp": "cpp"
 	},
 	"ros.distro": "melodic"
 }

@@ -386,6 +386,7 @@ void FeatureManager::removeBackShiftDepth(Eigen::Matrix3d marg_R, Eigen::Vector3
                 feature.erase(it);  // 那他就没有存在的价值了
                 continue;
             }
+            //; 这个else说明滑窗的帧去掉之后，这个地图点仍然能被至少2帧看到，那么他还能形成视觉重投影的约束，因此进行管辖权交接
             else    // 进行管辖权的转交
             {
                 Eigen::Vector3d pts_i = uv_i * it->estimated_depth; // 实际相机坐标系下的坐标
@@ -422,6 +423,7 @@ void FeatureManager::removeBack()
             it->start_frame--;
         else
         {
+            //; 不进行深度的转换，直接删除第0帧对当前特征点的观测
             it->feature_per_frame.erase(it->feature_per_frame.begin());
             if (it->feature_per_frame.size() == 0)
                 feature.erase(it);
@@ -429,23 +431,28 @@ void FeatureManager::removeBack()
     }
 }
 
-// 对margin倒数第二帧进行处理
+// 对margin倒数第二帧进行处理，就是处理被边缘化掉的倒数第二帧的图像看到的地图点
 void FeatureManager::removeFront(int frame_count)
 {
     for (auto it = feature.begin(), it_next = feature.begin(); it != feature.end(); it = it_next)
     {
         it_next++;
 
+        //; 因为只有最后一帧会向前滑动 ，而倒数第二帧前面的图像帧不会向前滑动，
+        //; 因此这些帧即使观测到了倒数第二帧所观测到的地图点，其首次观测的图像帧id也不会改变
         if (it->start_frame == frame_count) // 如果地图点被最后一帧看到，由于滑窗，他的起始帧减1
         {
             it->start_frame--;
         }
         else
         {
+            //; j实际上就是倒数第二帧在这个地图点的FeaturePerFram中的索引，比如这个地图点在第5帧被看到，
+            //; 倒数第2帧是第9帧，那么j=9-5=4
             int j = WINDOW_SIZE - 1 - it->start_frame;  // 倒数第二帧在这个地图点对应KF vector的idx
             if (it->endFrame() < frame_count - 1)   // 如果该地图点不能被倒数第二帧看到，那没什么好做的
                 continue;
             it->feature_per_frame.erase(it->feature_per_frame.begin() + j); // 能被倒数第二帧看到，erase掉这个索引
+            //; 其实这里如果=1也没有价值了，因为此时无法形成视觉重投影的约束
             if (it->feature_per_frame.size() == 0)  // 如果这个地图点没有别的观测了
                 feature.erase(it);  // 就没有存在的价值了
         }
