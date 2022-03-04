@@ -105,14 +105,14 @@ class Estimator
     vector<Vector3d> key_poses;
     double initial_timestamp;
 
-
-    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
-    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
-    double para_Feature[NUM_OF_F][SIZE_FEATURE];
-    double para_Ex_Pose[NUM_OF_CAM][SIZE_POSE];
-    double para_Retrive_Pose[SIZE_POSE];
-    double para_Td[1][1];
-    double para_Tr[1][1];
+    //; 后端优化中要优化的参数块
+    double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];   //; 位姿，包括3维的位置和4维的姿态（四元数）
+    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS]; //; 速度和ba,bg，每一个都是3维
+    double para_Feature[NUM_OF_F][SIZE_FEATURE];  //; 特征点，设了上限1000个特征点，每个特征点维护一个逆深度
+    double para_Ex_Pose[NUM_OF_CAM][SIZE_POSE];   //; 外参，也是3维的位置和4维的姿态（四元数）
+    double para_Retrive_Pose[SIZE_POSE];  //; 和回环检测相关的一个位姿
+    double para_Td[1][1];  //; 时间戳延时 
+    double para_Tr[1][1];  //; 没有用到
 
     int loop_window_index;
 

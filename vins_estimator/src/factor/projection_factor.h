@@ -7,6 +7,7 @@
 #include "../utility/tic_toc.h"
 #include "../parameters.h"
 
+//; 同理，想解析求导必须继承于SizedCostFunction函数，并且残差维度是2，然后维护的四个残差块的维度是<7, 7, 7, 1>
 class ProjectionFactor : public ceres::SizedCostFunction<2, 7, 7, 7, 1>
 {
   public:

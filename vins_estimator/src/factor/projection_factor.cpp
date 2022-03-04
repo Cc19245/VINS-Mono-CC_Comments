@@ -18,9 +18,11 @@ ProjectionFactor::ProjectionFactor(const Eigen::Vector3d &_pts_i, const Eigen::V
 #endif
 };
 
+//; 解析求导，在这里面实现：1.残差计算 2.雅克比计算
 bool ProjectionFactor::Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
 {
     TicToc tic_toc;
+    //; 优化的4个参数块：i帧imu位姿，j帧imu位姿，imu和相机外参，特征点的逆深度
     Eigen::Vector3d Pi(parameters[0][0], parameters[0][1], parameters[0][2]);
     Eigen::Quaterniond Qi(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
 
@@ -49,7 +51,8 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
     double dep_j = pts_camera_j.z();    // 第j帧相机系下深度
     residual = (pts_camera_j / dep_j).head<2>() - pts_j.head<2>();  // 重投影误差
 #endif
-
+    
+    //; sqrt_info信息矩阵，初始化的时候赋值，认为视觉提取特征点的不确定度是1.5个像素
     residual = sqrt_info * residual;    // 误差乘上信息矩阵
 
     if (jacobians)
@@ -70,23 +73,31 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
                      - x1 * x3 / pow(norm, 3),            - x2 * x3 / pow(norm, 3),            1.0 / norm - x3 * x3 / pow(norm, 3);
         reduce = tangent_base * norm_jaco;
 #else
+        //; dr_dp, 2x3的矩阵
         reduce << 1. / dep_j, 0, -pts_camera_j(0) / (dep_j * dep_j),    // 重投影误差对j帧相机坐标系下坐标求导
             0, 1. / dep_j, -pts_camera_j(1) / (dep_j * dep_j);
-#endif
+#endif 
+        //; 这里先把信息矩阵乘上，因为信息矩阵是前面的一个系数，防止后面忘记了
         reduce = sqrt_info * reduce;
 
+        //; 对imu_i的位姿的雅克比
         if (jacobians[0])
         {
+            //; 这里直接设置成2x7，因为是2x3 * 3x7 = 2x7
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_i(jacobians[0]);
 
             Eigen::Matrix<double, 3, 6> jaco_i;
             jaco_i.leftCols<3>() = ric.transpose() * Rj.transpose();
-            jaco_i.rightCols<3>() = ric.transpose() * Rj.transpose() * Ri * -Utility::skewSymmetric(pts_imu_i);
+            jaco_i.rightCols<3>() = ric.transpose() * Rj.transpose() * Ri * (-Utility::skewSymmetric(pts_imu_i));
 
             jacobian_pose_i.leftCols<6>() = reduce * jaco_i;
-            jacobian_pose_i.rightCols<1>().setZero();
+            //! 问题：怎么理解？雅克比应该是2*7的，这里计算出来是2*6，然后把最后一维直接设置成0了
+            //! 解答：问题出在旋转部分，状态变量是用四元数表示的，但是求导的时候使用李代数进行求导的，
+            //!      得到的是旋转向量的增量
+            jacobian_pose_i.rightCols<1>().setZero();       
         }
 
+        //; 对imu_j的位姿的雅克比
         if (jacobians[1])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_pose_j(jacobians[1]);
@@ -98,17 +109,21 @@ bool ProjectionFactor::Evaluate(double const *const *parameters, double *residua
             jacobian_pose_j.leftCols<6>() = reduce * jaco_j;
             jacobian_pose_j.rightCols<1>().setZero();
         }
+
+        //; 对外参的雅克比
         if (jacobians[2])
         {
             Eigen::Map<Eigen::Matrix<double, 2, 7, Eigen::RowMajor>> jacobian_ex_pose(jacobians[2]);
             Eigen::Matrix<double, 3, 6> jaco_ex;
             jaco_ex.leftCols<3>() = ric.transpose() * (Rj.transpose() * Ri - Eigen::Matrix3d::Identity());
-            Eigen::Matrix3d tmp_r = ric.transpose() * Rj.transpose() * Ri * ric;
+            Eigen::Matrix3d tmp_r = ric.transpose() * Rj.transpose() * Ri * ric;  //; 公式推到中的A
             jaco_ex.rightCols<3>() = -tmp_r * Utility::skewSymmetric(pts_camera_i) + Utility::skewSymmetric(tmp_r * pts_camera_i) +
                                      Utility::skewSymmetric(ric.transpose() * (Rj.transpose() * (Ri * tic + Pi - Pj) - tic));
             jacobian_ex_pose.leftCols<6>() = reduce * jaco_ex;
             jacobian_ex_pose.rightCols<1>().setZero();
         }
+
+        //; 对逆深度的雅克比
         if (jacobians[3])
         {
             Eigen::Map<Eigen::Vector2d> jacobian_feature(jacobians[3]);

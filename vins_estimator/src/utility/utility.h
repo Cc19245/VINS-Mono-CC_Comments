@@ -16,7 +16,8 @@ class Utility
     static Eigen::Quaternion<typename Derived::Scalar> deltaQ(const Eigen::MatrixBase<Derived> &theta)
     {
         typedef typename Derived::Scalar Scalar_t;
-
+ 
+        //; 旋转向量的增量转四元数，因为增量很小，所以轴角公式直接可以写成[1, theta/2]
         Eigen::Quaternion<Scalar_t> dq;
         Eigen::Matrix<Scalar_t, 3, 1> half_theta = theta;
         half_theta /= static_cast<Scalar_t>(2.0);

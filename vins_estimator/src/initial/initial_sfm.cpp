@@ -344,6 +344,7 @@ bool GlobalSFM::construct(int frame_num, Quaterniond* q, Vector3d* T, int l,
 		for (int j = 0; j < int(sfm_f[i].observation.size()); j++)
 		{
 			int l = sfm_f[i].observation[j].first;	//; l是观测到这个3d点的关键帧的id
+			//; 注意要想实现自动求导，这个ReprojectionError3D是自己定义的一个结构体
 			ceres::CostFunction* cost_function = ReprojectionError3D::Create(
 												//; 视觉观测，2d
 												sfm_f[i].observation[j].second.x(),

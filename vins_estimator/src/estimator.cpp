@@ -20,6 +20,8 @@ void Estimator::setParameter()
     f_manager.setRic(ric);  //; FeatureManager这个类中也有相机和IMU外参的类成员变量
     // 这里可以看到虚拟相机的用法
     //; 下面这些变量和残差的信息矩阵有关，所以factor这个文件夹下的文件暂时可以理解成系数
+    //! 问题：怎么理解这个信息矩阵的设置？
+    //! 不确定的回答：认为视觉提取特征点的不确定度是1.5个像素
     ProjectionFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTdFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     td = TD;
@@ -213,13 +215,17 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                result = initialStructure();     //; 视觉-惯导联合初始化
                initial_timestamp = header.stamp.toSec();    //; initial_timestamp类成员变量，是上一次初始化的时间戳
             }
+            //; 如果result=true，那么说明Step3中的VIO初始化成功，那么直接修改solver_flag = NON_LINEAR;
+            //; 这样下次最外面的if都不会进入了
             if(result)
             {
                 solver_flag = NON_LINEAR;
                 // Step 4： 后端非线性优化，边缘化
                 solveOdometry();
+
                 // Step 5： 滑动窗口，移除边缘化的帧
                 slideWindow();
+
                 // Step 6： 移除无效地图点
                 f_manager.removeFailures(); // 移除无效地图点
                 ROS_INFO("Initialization finish!");
@@ -641,13 +647,16 @@ bool Estimator::relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l)
 void Estimator::solveOdometry()
 {
     // 保证滑窗中帧数满了
+    //; 这里的判断其实也是多余的，因为前面滑窗不填满的话就无法进行初始化，初始化不完成就不会调用这个函数
     if (frame_count < WINDOW_SIZE)
         return;
     // 其次要求初始化完成
+    //; 其实根据调用solveOdometry()这个函数的逻辑来看，下面这个if判断是一定满足的 
     if (solver_flag == NON_LINEAR)
     {
         TicToc t_tri;
         // 先把应该三角化但是没有三角化的特征点三角化
+        //! 问题：在初始化部分不是调用过这个函数进行初始化了吗？为什么这里又调用一次？
         f_manager.triangulate(Ps, tic, ric);
         ROS_DEBUG("triangulation costs %f", t_tri.toc());
         optimization();
@@ -699,7 +708,7 @@ void Estimator::vector2double()
     // 特征点逆深度
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < f_manager.getFeatureCount(); i++)
-        para_Feature[i][0] = dep(i);
+        para_Feature[i][0] = dep(i);  //; 这里数组设置了上限1000，如果getFeatureCount>1000，岂不是数组越界了？
     // 传感器时间同步
     if (ESTIMATE_TD)
         para_Td[0][0] = td;
@@ -726,10 +735,12 @@ void Estimator::double2vector()
                                                       para_Pose[0][3],
                                                       para_Pose[0][4],
                                                       para_Pose[0][5]).toRotationMatrix());
-    // yaw角差
+    // yaw角差，即优化前第1帧的yaw - 优化后第1帧的yaw
     double y_diff = origin_R0.x() - origin_R00.x();
-    //TODO
+
+    //; 这里就是得到由于yaw角度的变化构成的旋转矩阵，用于把优化后的第0帧姿态的yaw角重新对齐到0
     Matrix3d rot_diff = Utility::ypr2R(Vector3d(y_diff, 0, 0));
+
     // 接近万象节死锁的问题 https://blog.csdn.net/AndrewFan/article/details/60981437
     if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0)
     {
@@ -744,7 +755,8 @@ void Estimator::double2vector()
     {
         // 保持第1帧的yaw不变
         Rs[i] = rot_diff * Quaterniond(para_Pose[i][6], para_Pose[i][3], para_Pose[i][4], para_Pose[i][5]).normalized().toRotationMatrix();
-        // 保持第1帧的位移不变
+        
+        // 保持第1帧的位移不变，里面的减法是其他帧相对第1帧的相对位移
         Ps[i] = rot_diff * Vector3d(para_Pose[i][0] - para_Pose[0][0],
                                 para_Pose[i][1] - para_Pose[0][1],
                                 para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
@@ -753,6 +765,7 @@ void Estimator::double2vector()
                                     para_SpeedBias[i][1],
                                     para_SpeedBias[i][2]);
 
+        //; bias自然是不受第一帧的位姿的影响的
         Bas[i] = Vector3d(para_SpeedBias[i][3],
                           para_SpeedBias[i][4],
                           para_SpeedBias[i][5]);
@@ -861,7 +874,7 @@ void Estimator::optimization()
 {
     // 借助ceres进行非线性优化
     ceres::Problem problem;
-    ceres::LossFunction *loss_function;
+    ceres::LossFunction *loss_function;  //; 注意这个是鲁邦核函数，只给视觉重投影误差使用
     //loss_function = new ceres::HuberLoss(1.0);
     loss_function = new ceres::CauchyLoss(1.0);
     // Step 1 定义待优化的参数块，类似g2o的顶点
@@ -869,7 +882,11 @@ void Estimator::optimization()
     for (int i = 0; i < WINDOW_SIZE + 1; i++)
     {
         // 由于姿态不满足正常的加法，也就是李群上没有加法，因此需要自己定义他的加法
+        //; 如果像初始化的SfM最后进行的全局BA那样，优化的是四元数，那么可以直接使用ceres官方定义的四元数局部参数块
+        //; 来实现四元数独特的加法。但是这里维护的参数块是位置+四元数，一个7维的参数块，其中位置是普通加，四元数
+        //; 是独特的加，所以需要自己定义局部参数块PoseLocalParameterization来实现这种加法
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        //; 添加参数块，形参：这个参数的指针，参数的维度（数组维度），自定义加法的类指针
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
         problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
     }
@@ -878,6 +895,7 @@ void Estimator::optimization()
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Ex_Pose[i], SIZE_POSE, local_parameterization);
+        //; 如果外参固定（给定的非常精确），那么就不需要优化
         if (!ESTIMATE_EXTRINSIC)
         {
             ROS_DEBUG("fix extinsic param");
@@ -893,11 +911,19 @@ void Estimator::optimization()
         problem.AddParameterBlock(para_Td[0], 1);
         //problem.SetParameterBlockConstant(para_Td[0]);
     }
-    // 实际上还有地图点，其实平凡的参数块不需要调用AddParameterBlock，增加残差块接口时会自动绑定
+    //! 注意：实际上还有地图点，其实平凡的参数块不需要调用AddParameterBlock，增加残差块接口时会自动绑定
+    //!      也就是说对于地图点来说非常多，并且在增加残差块的时候一定会输入地图点，此时会自动绑定
+    //; 扩展：实际上，只要是不需要定义独特加法的参数块，都可以不显性地调用AddParameterBlock添加参数块。
+    //;      因为后面定义残差块的时候，会自动把要优化的参数块作为形参传入的残差块的函数中，这样就会实现参数块的自动绑定
     TicToc t_whole, t_prepare;
+
+    //; 因为ceres优化的都是double数组，上面把这些数组添加进参数块了，但是数组中的数据和实际的位姿、bais等参数还没有
+    //; 对应关系，所以这里要把Eigen维护的vector数据更新到ceres优化用的double数组中
     // eigen -> double
     vector2double();
+
     // Step 2 通过残差约束来添加残差块，类似g2o的边
+    // Step 2.1 边缘化约束
     // 上一次的边缘化结果作为这一次的先验
     if (last_marginalization_info)
     {
@@ -906,19 +932,22 @@ void Estimator::optimization()
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
     }
-    // imu预积分的约束
+    // Step 2.2 imu预积分的约束
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         int j = i + 1;
-        // 时间过长这个约束就不可信了
+        // 滑窗中的两帧直接时间过长，这个IMU预积分约束就不可信了
         if (pre_integrations[j]->sum_dt > 10.0)
             continue;
+        //; 注意这里用预积分类初始化IMUFactor类中的预积分成员变量，这样IMUFactor就有了预积分量
         IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
+        //; 参数：CostFunction, 核函数，要优化的参数块
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
     }
     int f_m_cnt = 0;
     int feature_index = -1;
-    // 视觉重投影的约束
+
+    // Step 2.3 视觉重投影的约束
     // 遍历每一个特征点
     for (auto &it_per_id : f_manager.feature)
     {
@@ -1031,10 +1060,13 @@ void Estimator::optimization()
     ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
     ROS_DEBUG("solver costs: %f", t_solver.toc());
     // 把优化后double -> eigen
+    //; 因为优化的是double数组，因此要把优化后的double数组的数值更新到滑窗中的Eigen变量中
     double2vector();
+
     // Step 4 边缘化
     // 科普一下舒尔补
     TicToc t_whole_marginalization;
+    //; 如果倒数第2帧是关键帧的话，那么就需要把滑窗中最老的那一帧边缘化掉
     if (marginalization_flag == MARGIN_OLD)
     {
         // 一个用来边缘化操作的对象
