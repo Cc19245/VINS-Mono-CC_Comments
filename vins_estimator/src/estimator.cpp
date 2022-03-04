@@ -1072,9 +1072,10 @@ void Estimator::optimization()
         // 一个用来边缘化操作的对象
         MarginalizationInfo *marginalization_info = new MarginalizationInfo();
         // 这里类似手写高斯牛顿，因此也需要都转成double数组
+        //; 这里类似手写高斯牛顿，也会用到ceres之前定义的一些雅克比，因此这里还是要转化成double
         vector2double();
         // 关于边缘化有几点注意的地方
-        // 1、找到需要边缘化的参数块，这里是地图点，第0帧位姿，第0帧速度零偏
+        // 1、找到需要边缘化的参数块，这里是地图点，第0帧位姿，第0帧速度零偏   
         // 2、找到构造高斯牛顿下降时跟这些待边缘化相关的参数块有关的残差约束，那就是预积分约束，重投影约束，以及上一次边缘化约束
         // 3、这些约束连接的参数块中，不需要被边缘化的参数块，就是被提供先验约束的部分，也就是滑窗中剩下的位姿和速度零偏
 
@@ -1101,13 +1102,18 @@ void Estimator::optimization()
         }
         // 只有第1个预积分和待边缘化参数块相连
         {
+            //; 同理这里需要判断预积分的约束时间要<10,否则时间太久不准，那就不能边缘化形成先验约束了，直接丢掉即可
             if (pre_integrations[1]->sum_dt < 10.0)
             {
                 // 跟构建ceres约束问题一样，这里也需要得到残差和雅克比
                 IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
-                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-                                                                           vector<int>{0, 1});  // 这里就是第0和1个参数块是需要被边缘化的
+                //; ResidualBlockInfo 残差块信息类
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL, //; CostFunction， 鲁邦核函数
+                                                            //; 这个IMU预积分和哪些参数块有关
+                                                            //; 这里vector<double *>就是取这些参数块的首地址
+                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                                                            //; 这里就是第0和1个参数块是需要被边缘化的, 注意要被边缘化的参数放在前面方便进行舒尔补
+                                                            vector<int>{0, 1});  
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }
@@ -1150,9 +1156,11 @@ void Estimator::optimization()
                     else
                     {
                         ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
-                        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,
-                                                                                       vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
-                                                                                       vector<int>{0, 3});  // 这里第0帧和地图点被margin
+                        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,  //; CostFunction， 鲁邦核函数
+                                            //; 与视觉重投影有关的参数块：i帧位姿，j帧位姿，外参，3d点的逆深度       
+                                            vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
+                                            //; 要边缘化掉的参数块：第0帧位姿，地图点（降低fill-in现象的影响）
+                                            vector<int>{0, 3});  // 这里第0帧和地图点被margin
                         marginalization_info->addResidualBlockInfo(residual_block_info);
                     }
                 }
@@ -1165,18 +1173,19 @@ void Estimator::optimization()
         ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
         
         TicToc t_margin;
-        // 边缘化操作
+        // Step 边缘化操作
         marginalization_info->marginalize();
         ROS_DEBUG("marginalization %f ms", t_margin.toc());
+
         // 即将滑窗，因此记录新地址对应的老地址
         std::unordered_map<long, double *> addr_shift;
         for (int i = 1; i <= WINDOW_SIZE; i++)
         {
-            // 位姿和速度都要滑窗移动
+            // 位姿和速度都要滑窗移动，键是后一帧的地址，值是它即将存储到的新地址
             addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
             addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
         }
-        // 外参和时间延时不变
+        // 外参和时间延时不变，不需要进行滑窗移动的操作，所以存储地址不变
         for (int i = 0; i < NUM_OF_CAM; i++)
             addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
         if (ESTIMATE_TD)
@@ -1188,26 +1197,42 @@ void Estimator::optimization()
 
         if (last_marginalization_info)
             delete last_marginalization_info;
-        last_marginalization_info = marginalization_info;   // 本次边缘化的所有信息
-        last_marginalization_parameter_blocks = parameter_blocks;   // 代表该次边缘化对某些参数块形成约束，这些参数块在滑窗之后的地址
+        //; 保留本次边缘化的所有信息到last_marginalization_info
+        last_marginalization_info = marginalization_info;   
+        //; parameter_blocks代表该次边缘化对某些参数块形成约束，这些参数块在滑窗之后的存储的内存地址
+        //; 同时这个值也进行保存，用于下次边缘化之前对这些参数块添加边缘化的先验约束
+        last_marginalization_parameter_blocks = parameter_blocks;   
         
     }
+    //; 1.下面这种情况是边缘化倒数第二帧，是因为之前经过一些判断决定倒数第二帧不是关键帧，那么
+    //;   倒数第二帧其实就不存在预积分约束和视觉重投影的约束
+    //; 2.但是如果存在一种情况会对倒数第二帧存在约束，就是之前边缘化掉的老关键帧看到的3d点也可以被
+    //;   倒数第二帧看到，这样的话老关键帧被边缘化掉之后也会对倒数第二帧形成约束
     else    // 边缘化倒数第二帧
     {
         // 要求有上一次边缘化的结果同时，即将被margin掉的在上一次边缘化后的约束中
         // 预积分结果合并，因此只有位姿margin掉
         if (last_marginalization_info &&
+            //; 1.last_marginalization_parameter_blocks存储的是上一次边缘化操作的时候对留下的那些参数块
+            //;   存在约束，然后在这个变量中存储了这些参数块进行滑窗之后存储的新的位置。
+            //; 2.这里从last_marginalization_parameter_blocks中寻找是否有倒数第二帧的位姿这个参数块
+            //;   如果找到了说明上次边缘化确实对倒数第二帧形成了约束，那么就进入if进行处理
             std::count(std::begin(last_marginalization_parameter_blocks), std::end(last_marginalization_parameter_blocks), para_Pose[WINDOW_SIZE - 1]))
         {
 
             MarginalizationInfo *marginalization_info = new MarginalizationInfo();
             vector2double();
+            //; 这里的判断是多余的，一定满足
             if (last_marginalization_info)
             {
                 vector<int> drop_set;
                 for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
                 {
                     // 速度零偏只会margin第1个，不可能出现倒数第二个
+                    //; 1.这是因为速度和零偏只在IMU约束中才有，而上次边缘化是边缘化掉滑窗中的第0帧，IMU约束
+                    //;   只会在第0帧和第1帧之间建立，不可能在第0帧和倒数第二帧之间建立。
+                    //; 2.但是第0帧可以通过共视的3d点和倒数第二帧之间形成约束，但此时仅能约束位姿（没有速度零偏约束），
+                    //;   所以最外面的if判断成立，但下面的Assert不成立，就说明这个约束肯定是共视3d点产生的视觉约束
                     ROS_ASSERT(last_marginalization_parameter_blocks[i] != para_SpeedBias[WINDOW_SIZE - 1]);
                     // 这种case只会margin掉倒数第二个位姿
                     if (last_marginalization_parameter_blocks[i] == para_Pose[WINDOW_SIZE - 1])
@@ -1222,7 +1247,7 @@ void Estimator::optimization()
 
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
-            // 这里的操作如出一辙
+            // 这里的操作如出一辙，先预处理，然后边缘化
             TicToc t_pre_margin;
             ROS_DEBUG("begin marginalization");
             marginalization_info->preMarginalize();
@@ -1233,22 +1258,27 @@ void Estimator::optimization()
             marginalization_info->marginalize();
             ROS_DEBUG("end marginalization, %f ms", t_margin.toc());
             
+            //; 进行滑窗中关键帧的内存地址的变化
             std::unordered_map<long, double *> addr_shift;
             for (int i = 0; i <= WINDOW_SIZE; i++)
             {
+                //; 如果是倒数第二帧，因为它直接被边缘化掉了，所以直接丢掉，内存中没有它的地址了
                 if (i == WINDOW_SIZE - 1)
                     continue;
+                //; 如果是最后一帧，那么它的新内存地址就变成前一帧的内存地址
                 else if (i == WINDOW_SIZE)  // 滑窗，最新帧成为次新帧
                 {
                     addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
                     addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
                 }
+                //; 倒数第二帧之前的其他帧不受影响
                 else    // 其他不变
                 {
                     addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i];
                     addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i];
                 }
             }
+            //; 同理，外参和td不受滑窗影响，内存地址不变
             for (int i = 0; i < NUM_OF_CAM; i++)
                 addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
             if (ESTIMATE_TD)
@@ -1256,12 +1286,12 @@ void Estimator::optimization()
                 addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
             }
             
+            //; 下面的操作也和边缘化老帧的时候一样
             vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
             if (last_marginalization_info)
                 delete last_marginalization_info;
             last_marginalization_info = marginalization_info;
             last_marginalization_parameter_blocks = parameter_blocks;
-            
         }
     }
     ROS_DEBUG("whole marginalization costs: %f", t_whole_marginalization.toc());
