@@ -112,6 +112,8 @@ void image_callback(const sensor_msgs::ImageConstPtr &image_msg)
     else if (image_msg->header.stamp.toSec() - last_image_time > 1.0 || image_msg->header.stamp.toSec() < last_image_time)
     {
         ROS_WARN("image discontinue! detect a new sequence!");
+        //! 没看懂这里的序列是怎么回事
+        //; 这里的序列和orbslam3中的地图是一样的？
         new_sequence(); // 如果发生了就新建一个序列 TODO: sequense 是否可以合并？
     }
     last_image_time = image_msg->header.stamp.toSec();
@@ -166,6 +168,7 @@ void pose_callback(const nav_msgs::Odometry::ConstPtr &pose_msg)
  * 
  * @param[in] forward_msg 
  */
+//; 这个就是输出IMU频率的最新的位姿给rviz可视化使用
 void imu_forward_callback(const nav_msgs::Odometry::ConstPtr &forward_msg)
 {
     if (VISUALIZE_IMU_FORWARD)
@@ -343,13 +346,16 @@ void process()
                 point_buf.pop();
                 printf("throw point at beginning\n");
             }
-            // 上面确保了image_buf <= point_buf && image_buf <= pose_buf
+            // 上面确保了时间上原图的时间image_buf <= point_buf && image_buf <= pose_buf
             // 下面根据pose时间找时间戳同步的原图和地图点
             else if (image_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec() 
                 && point_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec())
             {
                 pose_msg = pose_buf.front();    // 取出来pose
                 pose_buf.pop();
+                //; 1.把pose_buf中的位姿变量全部清空。这里的作用就是保证新收到的关键帧位姿可以快速的进行回环检测。
+                //;    比如关键帧已经到了第100帧，而这里回环还在检测第10帧是否有回环，那么这样实时性就不太好了
+                //; 2.这样也相当于进行了一个降频处理
                 while (!pose_buf.empty())   // 清空所有的pose，回环的帧率慢一些没关系
                     pose_buf.pop();
                 // 找到对应pose的原图
@@ -372,6 +378,7 @@ void process()
             //printf(" point time %f \n", point_msg->header.stamp.toSec());
             //printf(" image time %f \n", image_msg->header.stamp.toSec());
             // skip fisrt few
+            //; 跳过前几帧，因为刚开始没有明显的累积漂移
             if (skip_first_cnt < SKIP_FIRST_CNT)    // 跳过最开始的SKIP_FIRST_CNT帧
             {
                 skip_first_cnt++;
@@ -404,6 +411,7 @@ void process()
             else
                 ptr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::MONO8);
             
+            //; 得到opencv格式的图片，方便后续处理
             cv::Mat image = ptr->image;
             // build keyframe
             // 得到KF的位姿，转成eigen格式
@@ -414,6 +422,7 @@ void process()
                                      pose_msg->pose.pose.orientation.x,
                                      pose_msg->pose.pose.orientation.y,
                                      pose_msg->pose.pose.orientation.z).toRotationMatrix();
+            //; 要求两次检测回环的关键帧之间有足够的平移距离，否则频繁回环意义也不大。这里也相当于是一个降采样
             if((T - last_t).norm() > SKIP_DIS)  // 要求KF相隔必要的平移距离
             {
                 vector<cv::Point3f> point_3d;   // VIO世界坐标系下的地图点坐标
@@ -447,6 +456,8 @@ void process()
                                    point_3d, point_2d_uv, point_2d_normal, point_id, sequence);   
                 m_process.lock();
                 start_flag = 1;
+            
+                //; 重点：回环检测的核心函数
                 posegraph.addKeyFrame(keyframe, 1); // 回环检测核心入口函数
                 m_process.unlock();
                 frame_index++;
@@ -488,13 +499,13 @@ int main(int argc, char **argv)
 {
     ros::init(argc, argv, "pose_graph");
     ros::NodeHandle n("~");
-    posegraph.registerPub(n);
+    posegraph.registerPub(n);   //; 注册一些用于rviz可视化的publisher
 
     // read param
     n.getParam("visualization_shift_x", VISUALIZATION_SHIFT_X); // 这两个shift基本都是0
-    n.getParam("visualization_shift_y", VISUALIZATION_SHIFT_Y);
-    n.getParam("skip_cnt", SKIP_CNT);   // 跳过前SKIP_CNT帧
-    n.getParam("skip_dis", SKIP_DIS);   // 两帧距离门限
+    n.getParam("visualization_shift_y", VISUALIZATION_SHIFT_Y); //; 这两个参数是和可视化有关的偏移
+    n.getParam("skip_cnt", SKIP_CNT);   // 跳过前SKIP_CNT帧，因为上来就做回环检测是没有意义的（漂移不大）
+    n.getParam("skip_dis", SKIP_DIS);   // 两帧距离门限，这个参数具体干什么的还不清楚？
     std::string config_file;
     n.getParam("config_file", config_file);
     cv::FileStorage fsSettings(config_file, cv::FileStorage::READ);
@@ -508,6 +519,7 @@ int main(int argc, char **argv)
     cameraposevisual.setLineWidth(camera_visual_size / 10.0);
 
     // 是否进行回环检测的标识
+    //; 注意如果这个标志是false，那么这个节点也会运行，只是不进行回环检测了，但是还有可视化的功能
     LOOP_CLOSURE = fsSettings["loop_closure"];
     std::string IMAGE_TOPIC;
     int LOAD_PREVIOUS_POSE_GRAPH;
@@ -515,11 +527,14 @@ int main(int argc, char **argv)
     {
         ROW = fsSettings["image_height"];   // 图片分辨率
         COL = fsSettings["image_width"];
+        //! 这个函数没有看懂
         std::string pkg_path = ros::package::getPath("pose_graph");
+        //; 这里使用二进制词袋，相比orbslam的txt文件的词袋，节约了一半以上的内存
         string vocabulary_file = pkg_path + "/../support_files/brief_k10L6.bin";    // 训练好的二进制词袋的路径
         cout << "vocabulary_file" << vocabulary_file << endl;
         posegraph.loadVocabulary(vocabulary_file);  // 加载二进制词袋
 
+        //; 这个pattern文件就是计算描述子的时候特征点周围的点对的坐标，在orb中是直接写在程序里了
         BRIEF_PATTERN_FILE = pkg_path + "/../support_files/brief_pattern.yml";  // 计算描述子pattern的文件
         cout << "BRIEF_PATTERN_FILE" << BRIEF_PATTERN_FILE << endl;
         // 和前面一样，生成一个相机模型
@@ -563,11 +578,12 @@ int main(int argc, char **argv)
     ros::Subscriber sub_imu_forward = n.subscribe("/vins_estimator/imu_propagate", 2000, imu_forward_callback);
     ros::Subscriber sub_vio = n.subscribe("/vins_estimator/odometry", 2000, vio_callback);
     ros::Subscriber sub_image = n.subscribe(IMAGE_TOPIC, 2000, image_callback);
-    ros::Subscriber sub_pose = n.subscribe("/vins_estimator/keyframe_pose", 2000, pose_callback);
+    ros::Subscriber sub_pose = n.subscribe("/vins_estimator/keyframe_pose", 2000, pose_callback);  //; 接收滑窗中发来的关键帧位姿
     ros::Subscriber sub_extrinsic = n.subscribe("/vins_estimator/extrinsic", 2000, extrinsic_callback);
-    ros::Subscriber sub_point = n.subscribe("/vins_estimator/keyframe_point", 2000, point_callback);
+    ros::Subscriber sub_point = n.subscribe("/vins_estimator/keyframe_point", 2000, point_callback);  //; 接收滑窗中发来的关键帧特征点
     ros::Subscriber sub_relo_relative_pose = n.subscribe("/vins_estimator/relo_relative_pose", 2000, relo_relative_pose_callback);
 
+    //; 注册一些可视化相关的publisher
     pub_match_img = n.advertise<sensor_msgs::Image>("match_image", 1000);
     pub_camera_pose_visual = n.advertise<visualization_msgs::MarkerArray>("camera_pose_visual", 1000);
     pub_key_odometrys = n.advertise<visualization_msgs::Marker>("key_odometrys", 1000);
@@ -577,8 +593,8 @@ int main(int argc, char **argv)
     std::thread measurement_process;
     std::thread keyboard_command_process;
 
-    measurement_process = std::thread(process);
-    keyboard_command_process = std::thread(command);
+    measurement_process = std::thread(process);   //; 回环检测的主处理线程
+    keyboard_command_process = std::thread(command);  //; 响应键盘命令的线程
 
 
     ros::spin();

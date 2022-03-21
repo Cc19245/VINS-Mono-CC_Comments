@@ -47,6 +47,7 @@ void PoseGraph::loadVocabulary(std::string voc_path)
     db.setVocabulary(*voc, false, 0);
 }
 
+//; 回环检测的核心函数，形参：关键帧，是否进行回环检测的标志
 void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
 {
     //shift to base frame
@@ -57,8 +58,12 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
         sequence_cnt++;
         // 复位一些变量
         sequence_loop.push_back(0);
+
+        //; 这两个变量是两个不同的sequence之间的δT
+        //! 还是没明白sequence是怎么回事？
         w_t_vio = Eigen::Vector3d(0, 0, 0);
         w_r_vio = Eigen::Matrix3d::Identity();
+
         m_drift.lock();
         t_drift = Eigen::Vector3d(0, 0, 0);
         r_drift = Eigen::Matrix3d::Identity();
@@ -66,11 +71,16 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     }
     // 更新一下VIO位姿
     cur_kf->getVioPose(vio_P_cur, vio_R_cur);   // 得到VIO节点的位姿
+  
+    //; 将当前帧的sequence相对回环帧的sequence的δT补偿到当前帧的VIO位姿上，得到当前帧回环修正后的位姿
+    //! 也是没明白这里的补偿是怎么回事？
     vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;  // 回环修正后的消除累计误差的位姿
     vio_R_cur = w_r_vio *  vio_R_cur;
+
     cur_kf->updateVioPose(vio_P_cur, vio_R_cur);    // 更新VIO位姿
     cur_kf->index = global_index;   // 赋值索引
-    global_index++;
+    global_index++;   //; 这个是类成员变量
+
 	int loop_index = -1;
     if (flag_detect_loop)
     {
@@ -86,6 +96,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
         //printf(" %d detect loop with %d \n", cur_kf->index, loop_index);
         KeyFrame* old_kf = getKeyFrame(loop_index); // 得到回环帧的指针
 
+        //; 这里还要进行一下回环帧的校验，包括一些描述子校验、几何校验
         if (cur_kf->findConnection(old_kf)) // 如果确定两者回环
         {
             // 更新最早回环帧，用来确定全局优化的范围
@@ -115,6 +126,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
             shift_t = w_P_cur - w_R_cur * vio_R_cur.transpose() * vio_P_cur; 
             // shift vio pose of whole sequence to the world frame
             // 如果这两个不是同一个sequence，并且当前sequence没有跟之前合并
+            //! 没明白这个序列到底是干嘛的？为什么这里更新当前帧的位姿变成回环检测认为的位姿，还要判断是否是同一个序列以及之前是否更新过？
             if (old_kf->sequence != cur_kf->sequence && sequence_loop[cur_kf->sequence] == 0)
             {  
                 w_r_vio = shift_r;
@@ -122,6 +134,7 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
                 // T_w_w' * T_w'_cur
                 vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
                 vio_R_cur = w_r_vio *  vio_R_cur;
+                //; 把当前帧的位姿更新到回环帧检测出来的应该在的位姿上去
                 cur_kf->updateVioPose(vio_P_cur, vio_R_cur);    // 更新当前帧位姿
                 list<KeyFrame*>::iterator it = keyframelist.begin();
                 // 同时把这个序列当前帧之间的位姿都更新过来
@@ -149,8 +162,12 @@ void PoseGraph::addKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     Vector3d P;
     Matrix3d R;
     cur_kf->getVioPose(P, R);
+
+    //; 对当前帧的位姿进行补偿，得到全局优化后的位姿
     P = r_drift * P + t_drift;  // 根据全局优化后进行位姿调整
     R = r_drift * R;
+
+
     cur_kf->updatePose(P, R);
     // 下面是可视化部分
     Quaterniond Q{R};
@@ -240,7 +257,7 @@ void PoseGraph::loadKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     global_index++;
     int loop_index = -1;
     if (flag_detect_loop)
-        // 进行回环检测
+        // 进行回环检测，返回值是找到的回环帧的index
        loop_index = detectLoop(cur_kf, cur_kf->index);
     else
     {
@@ -250,7 +267,8 @@ void PoseGraph::loadKeyFrame(KeyFrame* cur_kf, bool flag_detect_loop)
     if (loop_index != -1)
     {
         printf(" %d detect loop with %d \n", cur_kf->index, loop_index);
-        KeyFrame* old_kf = getKeyFrame(loop_index);
+        KeyFrame* old_kf = getKeyFrame(loop_index); 
+
         if (cur_kf->findConnection(old_kf))
         {
             if (earliest_loop_index > loop_index || earliest_loop_index == -1)
@@ -382,11 +400,13 @@ int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
     // a good match with its nerghbour
     // ret按照得分大小降序排列的，这里确保返回的候选KF数目至少一个且得分满足要求
     if (ret.size() >= 1 &&ret[0].Score > 0.05)
+    {
         // 开始遍历其他候选帧
         for (unsigned int i = 1; i < ret.size(); i++)
         {
             //if (ret[i].Score > ret[0].Score * 0.3)
             // 如果有大于一个候选帧且得分满足要求
+            //; 因为如果当前帧和之前的某一帧有回环关系的话，那么不可能只和一帧有回环关系，肯定和那一帧附近的几帧都有关系
             if (ret[i].Score > 0.015)
             {          
                 find_loop = true;   // 就认为找到回环了
@@ -401,6 +421,7 @@ int PoseGraph::detectLoop(KeyFrame* keyframe, int frame_index)
             }
 
         }
+    }
 /*
     if (DEBUG_IMAGE)
     {
@@ -484,6 +505,7 @@ void PoseGraph::optimize4DoF()
             loss_function = new ceres::HuberLoss(0.1);
             //loss_function = new ceres::CauchyLoss(1.0);
             // 由于yaw不满足简单的增量更新方式，因此需要自定义其local param形式
+            //; 这里乍一看yaw角应该是满足加法的，但是实际上yaw角有限制在-pi~pi之间，所以这里还是把yaw角设置成了一个局部参数
             ceres::LocalParameterization* angle_local_parameterization =
                 AngleLocalParameterization::Create();
 
@@ -507,9 +529,9 @@ void PoseGraph::optimize4DoF()
                 q_array[i] = tmp_q;
                 // 四元数转欧拉角
                 Vector3d euler_angle = Utility::R2ypr(tmp_q.toRotationMatrix());
-                euler_array[i][0] = euler_angle.x();
-                euler_array[i][1] = euler_angle.y();
-                euler_array[i][2] = euler_angle.z();
+                euler_array[i][0] = euler_angle.x();  //; yaw
+                euler_array[i][1] = euler_angle.y();  //; pitch
+                euler_array[i][2] = euler_angle.z();  //; roll
 
                 sequence_array[i] = (*it)->sequence;
                 // 只有yaw角参与优化，成为参数块
