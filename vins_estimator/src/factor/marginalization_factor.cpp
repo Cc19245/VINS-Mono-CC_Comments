@@ -20,12 +20,13 @@ void ResidualBlockInfo::Evaluate()
     {
         //; 每个参数块对应的雅克比矩阵的维度，都是 残差维度x变量维度，比如IMU残差维度就是15，视觉残差维度就是2
         jacobians[i].resize(cost_function->num_residuals(), block_sizes[i]);    // 雅克比矩阵大小 残差×变量
-        raw_jacobians[i] = jacobians[i].data();  //; 建立内存之间的关系
+        //; 建立内存之间的关系。注意：.data()是返回这段数据的首地址，也就是指针，而不是返回这段数据
+        raw_jacobians[i] = jacobians[i].data();  
         //dim += block_sizes[i] == 7 ? 6 : block_sizes[i];
     }
     // 调用各自重载的接口计算残差和雅克比
     //; 这里需要手动调用ceres的函数计算一下雅克比，传入的形参：参数块二维数组的地址，残差数组的地址，计算的雅克比数组的地址
-    cost_function->Evaluate(parameter_blocks.data(), residuals.data(), raw_jacobians);  // 这里实际上结果放在了jacobians
+    cost_function->Evaluate(parameter_blocks.data(), residuals.data(), raw_jacobians); // 这里实际上结果放在了jacobians
 
     //std::vector<int> tmp_idx(block_sizes.size());
     //Eigen::MatrixXd tmp(dim, dim);
@@ -110,6 +111,7 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
     factors.emplace_back(residual_block_info);  // 残差块收集起来
 
     std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;    // 这个是和该约束相关的参数块
+    
     //; parameter_block_sizes是ceres中的一个接口，可以得到各个参数块的大小。
     //; 因为本函数传入的是参数块的首地址，并不知道参数块的大小
     std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();   // 各个参数块的大小
@@ -147,13 +149,14 @@ void MarginalizationInfo::preMarginalize()
         //; 但是这个函数本质上还是想调用ceres的Evaluate函数计算残差和雅克比，只不过进行了很多数据的封装
         it->Evaluate(); // 调用这个接口计算各个残差块的残差和雅克比矩阵
 
-        std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();  // 得到每个残差块的参数块大小
+        // 得到每个残差块的参数块大小
+        std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();  
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
         {
             //; 下面就是遍历所有要优化的参数块，比如如果是IMU预积分的约束，参数块就是4块：
             //;  第0帧的位姿（7），第0帧的速度零偏（9）；第1帧的位姿（7），第1帧的速度零偏（9）
             long addr = reinterpret_cast<long>(it->parameter_blocks[i]);    // 得到该参数块的地址
-            int size = block_sizes[i];  // 参数块大小
+            int size = block_sizes[i];  // 参数块的维度大小
             // 把各个参数块都备份起来，使用unordered map避免重复参数块，之所以备份，是为了后面的状态保留
             if (parameter_block_data.find(addr) == parameter_block_data.end())
             {
@@ -186,6 +189,7 @@ void* ThreadsConstructA(void* threadsstruct)
 {
     //; 传入的指针被强制转成了void*，这里再恢复到原来的数据类型的指针
     //! 问题：为什么要强制转成void*?是多线程任务函数要求的吗？如果不是的话，那么直接传入原来数据类型的指针不就可以了吗？
+    //!   回答：是的！多线程函数就是这么定义的，就是这么要求的
     ThreadsStruct* p = ((ThreadsStruct*)threadsstruct);
     // 遍历这么多分配过来的任务
     //; sub_factors是一个数组，里面都是ResidualBlockInfo指针
@@ -427,9 +431,15 @@ std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map
     {
         if (it.second >= m) // 如果是留下来的，说明后续会对其形成约束
         {
+            //; 非线性优化的边缘化约束因子中用到
             keep_block_size.push_back(parameter_block_size[it.first]);  // 留下来的参数块大小 global size
+            
             keep_block_idx.push_back(parameter_block_idx[it.first]);    // 留下来的在原向量中的排序
+            
+            //; 非线性优化的边缘化约束因子中用到
             keep_block_data.push_back(parameter_block_data[it.first]);  // 边缘化前各个参数块的值的备份
+            
+            //; 非线性优化的边缘化约束因子中用到
             keep_block_addr.push_back(addr_shift[it.first]); // 对应的新地址
         }
     }
@@ -446,7 +456,8 @@ std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map
  */
 //; 既然这个CostFunction类不能在编译之前确定参数块的大小，那么就在构造的时候，根据传入的上次边缘化留下的参数块
 //; 读取参数块的维度和残差的维度
-MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalization_info):marginalization_info(_marginalization_info)
+MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalization_info):
+    marginalization_info(_marginalization_info)
 {
     int cnt = 0;
     for (auto it : marginalization_info->keep_block_size)   // keep_block_size表示上一次边缘化留下来的参数块的大小
@@ -456,8 +467,8 @@ MarginalizationFactor::MarginalizationFactor(MarginalizationInfo* _marginalizati
         cnt += it;
     }
     //printf("residual size: %d, %d\n", cnt, n);
-    //; ceres接口，存储残差的维度，其实就是上一次边缘化之后新的b的维度
-    set_num_residuals(marginalization_info->n); // 残差维数就是所有剩余状态量的维数和，这里时local size
+    //; ceres接口，存储残差的维度，其实就是上一次边缘化之后新的残差的维度
+    set_num_residuals(marginalization_info->n); // 残差维数就是所有剩余状态量的维数和，这里是local size
 };
 
 /**
@@ -482,15 +493,15 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
     int n = marginalization_info->n;    // 上一次边缘化保留的残差块的local size的和,也就是残差维数
     int m = marginalization_info->m;    // 上次边缘化的被margin的残差块总和
     Eigen::VectorXd dx(n);  // 用来存储残差
+
     // 遍历所有的剩下的有约束的残差块
     for (int i = 0; i < static_cast<int>(marginalization_info->keep_block_size.size()); i++)
     {
         int size = marginalization_info->keep_block_size[i];  //; 当前这个参数块的维度
-        //; 当前这个参数块在边缘化的变量X中的索引
         int idx = marginalization_info->keep_block_idx[i] - m;  // idx起点统一到0
         //; parameters是本函数传入的形参，也就是这次要更新的参数块
         Eigen::VectorXd x = Eigen::Map<const Eigen::VectorXd>(parameters[i], size); // 当前参数块的值
-        //! 问题：当时参数块的值，是指在边缘化操作之前这个参数块的值？
+        //! 问题：当时参数块的值，是指在边缘化操作之前这个参数块的值？ 回答 ： 是的！
         Eigen::VectorXd x0 = Eigen::Map<const Eigen::VectorXd>(marginalization_info->keep_block_data[i], size); // 当时参数块的值
         if (size != 7)
         //; 这个dx的含义就是当时边缘化的时候这个参数块的值，到现在经过一些优化了这个参数块的值，增加了多少
@@ -500,11 +511,13 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
         {
             dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();    // 位移直接做差
             // 旋转就是李代数做差，这里四元数相乘做差取虚部在x2，结果就是旋转向量的部分
-            dx.segment<3>(idx + 3) = 2.0 * Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
+            dx.segment<3>(idx + 3) = 
+                2.0 * Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
             // 确保实部大于0，如果不大于0那么就把旋转向量部分取个反
             if (!((Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).w() >= 0))
             {
-                dx.segment<3>(idx + 3) = 2.0 * -Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
+                dx.segment<3>(idx + 3) =
+                    2.0 * -Utility::positify(Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() * Eigen::Quaterniond(x(6), x(3), x(4), x(5))).vec();
             }
         }
     }
@@ -516,6 +529,7 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
     //;   如果dx比较大，也就是上次边缘化之前和现在参数块的值变化比较大，那这里的残差就会比较大，这样就会让
     //;   最后总的loss比较大，所以优化的时候就需要考虑调整这些参数块的值，让边缘化约束产生的残差减小
     Eigen::Map<Eigen::VectorXd>(residuals, n) = marginalization_info->linearized_residuals + marginalization_info->linearized_jacobians * dx;
+
     if (jacobians)
     {
         //; 遍历每一个参数块
@@ -525,8 +539,11 @@ bool MarginalizationFactor::Evaluate(double const *const *parameters, double *re
             if (jacobians[i])
             {
                 int size = marginalization_info->keep_block_size[i], local_size = marginalization_info->localSize(size);
-                int idx = marginalization_info->keep_block_idx[i] - m;
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobian(jacobians[i], n, size);  //; 这部分雅克比的维度是n行，size列
+                //; 和误差同理，索引要对齐到0。但是注意这里是为了求列索引，因为边缘化的Jacobian已经确定了是nxn的，其中n是保留下的状态变量的维数
+                //; 它的分布如下： [d{e}/d{x_m+1}, d{e}/d{x_m+2} ... d{e}/d{x_m+n}]，所以列坐标就是状态变量的索引
+                int idx = marginalization_info->keep_block_idx[i] - m;  
+                //; 这部分雅克比的维度是n行，size列
+                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> jacobian(jacobians[i], n, size); 
                 jacobian.setZero();
                 //; 从上次边缘化求得的总的雅克比矩阵中的第idx列开始，取size列，就是当前参数块对应的雅克比
                 jacobian.leftCols(local_size) = marginalization_info->linearized_jacobians.middleCols(idx, local_size);

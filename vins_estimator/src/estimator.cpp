@@ -948,7 +948,7 @@ void Estimator::optimization()
     // Step 2.2 imu预积分的约束
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
-        int j = i + 1;
+        int j = i + 1;  //; j最后的值就是WINDOW_SIZE，也就是滑窗中的最后一帧
         // 滑窗中的两帧直接时间过长，这个IMU预积分约束就不可信了
         if (pre_integrations[j]->sum_dt > 10.0)
             continue;
@@ -1121,12 +1121,13 @@ void Estimator::optimization()
                 // 跟构建ceres约束问题一样，这里也需要得到残差和雅克比
                 IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
                 //; ResidualBlockInfo 残差块信息类
-                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL, //; CostFunction， 鲁邦核函数
-                                                            //; 这个IMU预积分和哪些参数块有关
-                                                            //; 这里vector<double *>就是取这些参数块的首地址
-                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-                                                            //; 这里就是第0和1个参数块是需要被边缘化的, 注意要被边缘化的参数放在前面方便进行舒尔补
-                                                            vector<int>{0, 1});  
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(
+                    imu_factor, NULL, //; CostFunction， 鲁邦核函数
+                    //; 这个IMU预积分和哪些参数块有关
+                    //; 这里vector<double *>就是取这些参数块的首地址
+                    vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                    //; 这里就是第0和1个参数块是需要被边缘化的, 注意要被边缘化的参数放在前面方便进行舒尔补
+                    vector<int>{0, 1});  
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }
@@ -1169,16 +1170,18 @@ void Estimator::optimization()
                     else
                     {
                         ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
-                        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,  //; CostFunction， 鲁邦核函数
-                                            //; 与视觉重投影有关的参数块：i帧位姿，j帧位姿，外参，3d点的逆深度       
-                                            vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
-                                            //; 要边缘化掉的参数块：第0帧位姿，地图点（降低fill-in现象的影响）
-                                            vector<int>{0, 3});  // 这里第0帧和地图点被margin
+                        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(
+                            f, loss_function,  //; CostFunction， 鲁邦核函数
+                            //; 与视觉重投影有关的参数块：i帧位姿，j帧位姿，外参，3d点的逆深度       
+                            vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index]},
+                            //; 要边缘化掉的参数块：第0帧位姿，地图点（降低fill-in现象的影响）
+                            vector<int>{0, 3});  // 这里第0帧和地图点被margin
                         marginalization_info->addResidualBlockInfo(residual_block_info);
                     }
                 }
             }
         }
+
         // 所有的残差块都收集好了
         TicToc t_pre_margin;
         // 进行预处理
@@ -1213,7 +1216,7 @@ void Estimator::optimization()
         //; 保留本次边缘化的所有信息到last_marginalization_info
         last_marginalization_info = marginalization_info;   
         //; parameter_blocks代表该次边缘化对某些参数块形成约束，这些参数块在滑窗之后的存储的内存地址
-        //; 同时这个值也进行保存，用于下次边缘化之前对这些参数块添加边缘化的先验约束
+        //; 同时这个值也进行保存，用于下次非线性优化之前对这些参数块添加边缘化的先验约束
         last_marginalization_parameter_blocks = parameter_blocks;   
         
     }
@@ -1230,7 +1233,8 @@ void Estimator::optimization()
             //;   存在约束，然后在这个变量中存储了这些参数块进行滑窗之后存储的新的位置。
             //; 2.这里从last_marginalization_parameter_blocks中寻找是否有倒数第二帧的位姿这个参数块
             //;   如果找到了说明上次边缘化确实对倒数第二帧形成了约束，那么就进入if进行处理
-            std::count(std::begin(last_marginalization_parameter_blocks), std::end(last_marginalization_parameter_blocks), para_Pose[WINDOW_SIZE - 1]))
+            std::count(std::begin(last_marginalization_parameter_blocks), 
+                       std::end(last_marginalization_parameter_blocks), para_Pose[WINDOW_SIZE - 1]))
         {
 
             MarginalizationInfo *marginalization_info = new MarginalizationInfo();
@@ -1248,6 +1252,9 @@ void Estimator::optimization()
                     //;   所以最外面的if判断成立，但下面的Assert不成立，就说明这个约束肯定是共视3d点产生的视觉约束
                     ROS_ASSERT(last_marginalization_parameter_blocks[i] != para_SpeedBias[WINDOW_SIZE - 1]);
                     // 这种case只会margin掉倒数第二个位姿
+                    //; last_marginalization_parameter_blocks[i]是一个double类型的指针，而para_Pose是一个二维数组，
+                    //; para_Pose[WINDOW_SIZE - 1]这种访问方式就得到二维数组中的第WINDOW_SIZE - 1个一维数组，其实也是一个指针，
+                    //; 指向这个一维数组的首地址
                     if (last_marginalization_parameter_blocks[i] == para_Pose[WINDOW_SIZE - 1])
                         drop_set.push_back(i);
                 }
@@ -1320,7 +1327,8 @@ void Estimator::slideWindow()
     if (marginalization_flag == MARGIN_OLD)
     {
         double t_0 = Headers[0].stamp.toSec();
-        //; 先备份一下将要被滑出窗口的老帧的位姿
+        //; 先备份一下将要被滑出窗口的老帧的位姿，这个主要是在移交第0帧看到的地图的管辖权的时候使用，
+        //; 因为需要将第0帧看到的地图点坐标通过第0帧的位姿转移到第1帧中
         back_R0 = Rs[0];
         back_P0 = Ps[0];
         // 必须是填满了滑窗才可以, 实际上这里是一定满足的，因为如果不填满滑窗，那么连初始化都无法完成
@@ -1338,12 +1346,14 @@ void Estimator::slideWindow()
                 angular_velocity_buf[i].swap(angular_velocity_buf[i + 1]);
 
                 Headers[i] = Headers[i + 1];
-                Ps[i].swap(Ps[i + 1]);
+                //; i最大是WINDOW_SIZE - 1，所以交换后，WINDOW_SIZE的地方变成滑窗中第0帧的数据
+                Ps[i].swap(Ps[i + 1]);  
                 Vs[i].swap(Vs[i + 1]);
                 Bas[i].swap(Bas[i + 1]);
                 Bgs[i].swap(Bgs[i + 1]);
             }
-            // 最后一帧的状态量赋上当前值，最为初始值，因为下一次仅仅使用IMU进行状态变量的估计的时候，需要在最新的一帧的位姿的基础上进行推算
+            // 最后一帧的状态量赋上当前值，最为初始值，因为下一次仅仅使用
+            // IMU进行状态变量的估计的时候，需要在最新的一帧的位姿的基础上进行推算
             Headers[WINDOW_SIZE] = Headers[WINDOW_SIZE - 1];
             Ps[WINDOW_SIZE] = Ps[WINDOW_SIZE - 1];
             Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
@@ -1353,7 +1363,10 @@ void Estimator::slideWindow()
             // 预积分量就得置零，这里就是直接删除掉预积分类这个指针
             delete pre_integrations[WINDOW_SIZE];
             //; 用最近的一些变量来新生成一个预积分类，然后等待最新的IMU数据到来，进行下一次的预积分
-            pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
+            pre_integrations[WINDOW_SIZE] = 
+                new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
+           
+           
             // buffer清空，等待新的数据来填，这里主要是等待新的IMU数据到来
             dt_buf[WINDOW_SIZE].clear();
             linear_acceleration_buf[WINDOW_SIZE].clear();
@@ -1381,7 +1394,6 @@ void Estimator::slideWindow()
                 // 释放完空间之后再erase，不能直接erase，否则会导致内存泄漏现象
                 all_image_frame.erase(all_image_frame.begin(), it_0);
                 all_image_frame.erase(t_0);
-
             }
             //; 之前一直没有对地图点进行操作，这里对地图点进行操作
             slideWindowOld();
