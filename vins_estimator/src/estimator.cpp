@@ -169,7 +169,8 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
     //! 下面的操作没有太看懂
     // all_image_frame用来做初始化相关操作，他保留滑窗起始到当前的所有帧
-    // 有一些帧会因为不是KF，被MARGIN_SECOND_NEW，但是即使较新的帧被margin，他也会保留在这个容器中，因为初始化要求使用所有的帧，而非只要KF
+    // 有一些帧会因为不是KF，被MARGIN_SECOND_NEW，但是即使较新的帧被margin，他也会保留在这个容器中，
+    //    因为初始化要求使用所有的帧，而非只要KF
     ImageFrame imageframe(image, header.stamp.toSec());
     imageframe.pre_integration = tmp_pre_integration;   //; tmp_pre_integration是类成员变量
     // 这里就是简单的把图像和预积分绑定在一起，这里预积分就是两帧之间的，滑窗中实际上是两个KF之间的
@@ -235,12 +236,17 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 last_P0 = Ps[0];
                 
             }
+
+            // 如果上面根据最开始的10帧图像初始化失败了，那么就直接滑窗，根据关键帧的情况把图像滑出去
             else
                 slideWindow();
         }
+        
+        //; 这里可以看到，前端发来的前10帧，不管是不是关键帧都会增加图像关键帧的帧数，知道增加到填满滑窗，然后就会执行上面的if语句
         else
             frame_count++;
     }
+
     //; 进行初始化之后，后面都会进入else这个分支
     else
     {

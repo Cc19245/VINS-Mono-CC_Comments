@@ -267,7 +267,9 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
 
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x)
 {
-    //; 进行陀螺仪的零偏估计，估计结果输出到Bgs中。计算得到Bgs后会重新计算所有帧的预积分
+    //; 1. 进行陀螺仪的零偏估计，估计结果输出到estimator的成员变量Bgs中。计算得到Bgs后会重新计算所有帧的预积分
+    //; 2. 注意这一步没有判断是否成功，因为一般来说都会成功，IMU的陀螺仪是比较准确的
+    //; 3. 这里可以看到滑窗中的普通帧的应用，就是在这里求陀螺仪零偏的时候，每两个相邻的普通帧都计算图像的旋转和IMU的旋转，从而估计零偏
     solveGyroscopeBias(all_image_frame, Bgs);
 
     if(LinearAlignment(all_image_frame, g, x))

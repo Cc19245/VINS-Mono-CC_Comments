@@ -378,7 +378,7 @@ void process()
                 //; 所以下面取整得到特征点id, 取余得到相机的id
                 int feature_id = v / NUM_OF_CAM;
                 int camera_id = v % NUM_OF_CAM;
-                double x = img_msg->points[i].x;    // 去畸变后归一滑像素坐标
+                double x = img_msg->points[i].x;    // 去畸变后归一化像素坐标
                 double y = img_msg->points[i].y;
                 double z = img_msg->points[i].z;
                 double p_u = img_msg->channels[1].values[i];    //; 特征点像素坐标, 感觉这个没用？后面看看有没有用
