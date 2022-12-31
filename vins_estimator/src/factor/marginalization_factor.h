@@ -76,7 +76,7 @@ class MarginalizationInfo
 //; 因为不知道到底边缘化掉哪一帧（最老帧和倒数第二帧），不同帧的参数块大小是不一样的，
 //; 因此无法在程序编译之前确定参数块的大小，就无法继承SizedCostFunction（即确定参数块维度的CostFunction）
 //; 所以这里只能继承最基本的CostFunction类
-class MarginalizationFactor : public ceres::CostFunction·
+class MarginalizationFactor : public ceres::CostFunction
 {
   public:
     MarginalizationFactor(MarginalizationInfo* _marginalization_info);

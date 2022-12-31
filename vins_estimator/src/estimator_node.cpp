@@ -260,11 +260,12 @@ void relocalization_callback(const sensor_msgs::PointCloudConstPtr &points_msg)
     m_buf.unlock();
 }
 
-// thread: visual-inertial odometry
-//; 主线程，一直循环执行
+/**
+ * @brief 主循环线程，完成所有处理逻辑
+ */
 void process()
 {
-    while (true)    // 这个线程是会一直循环下去
+    while (true)  // 这个线程是会一直循环下去
     {
         //; 以图像帧作为索引，每帧图像匹配很多帧的IMU数据
         std::vector<std::pair<std::vector<sensor_msgs::ImuConstPtr>, sensor_msgs::PointCloudConstPtr>> measurements;
@@ -390,7 +391,7 @@ void process()
                 xyz_uv_velocity << x, y, z, p_u, p_v, velocity_x, velocity_y;
                 image[feature_id].emplace_back(camera_id,  xyz_uv_velocity);
             }
-            //; 处理图像数据的主函数，里面的步骤很多，非常重要！
+            // Step 处理图像数据的主函数，里面的步骤很多，非常重要！
             estimator.processImage(image, img_msg->header);
 
             // Step 4 主要工作基本完成，进行一些其他细节工作，主要是发布ros topic，用于ros的可视化
@@ -427,26 +428,33 @@ int main(int argc, char **argv)
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");
     ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
-    readParameters(n);      //; 又是读取参数的函数，看来是每个节点都写了一个单独的读取参数的函数
-    estimator.setParameter();   //; 设置估计器类的参数，主要是外参    
+    
+    // Step 1 读取配置文件中的参数，并赋值到estimator对象中
+    readParameters(n);      
+    estimator.setParameter();  
 #ifdef EIGEN_DONT_PARALLELIZE
     ROS_DEBUG("EIGEN_DONT_PARALLELIZE");
 #endif
     ROS_WARN("waiting for image and imu...");
 
-    // 注册一些publisher
-    //; 注意这里面注册的很多publisher和实际看节点图对不上，注册的很多publisher在节点图中都没有
+    // Step 2 注册一些要发布的消息
     registerPub(n);
-    // 接受imu消息
-    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
-    // 接受前端视觉光流结果, 这里的feature只包含追踪到的特征点，不包含图像
-    ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
-    // 接受前端重启命令
-    ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, restart_callback);
-    // 回环检测的fast relocalization响应
-    ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, relocalization_callback);
 
-    // 核心处理线程
+    // Step 3 订阅消息
+    // 接受imu消息
+    ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, 
+        imu_callback, ros::TransportHints().tcpNoDelay());
+    // 接受前端视觉光流结果, 这里的feature只包含追踪到的特征点，不包含图像
+    ros::Subscriber sub_image = n.subscribe("/feature_tracker/feature", 2000, 
+        feature_callback);
+    // 接受前端重启命令
+    ros::Subscriber sub_restart = n.subscribe("/feature_tracker/restart", 2000, 
+        restart_callback);
+    // 回环检测的fast relocalization响应
+    ros::Subscriber sub_relo_points = n.subscribe("/pose_graph/match_points", 2000, 
+        relocalization_callback);
+
+    // Step 4 核心处理线程
     std::thread measurement_process{process};
     ros::spin();
 

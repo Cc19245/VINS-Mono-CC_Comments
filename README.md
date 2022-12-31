@@ -1,12 +1,29 @@
-这是VINS-Mono开源代码的注释版本，方便大家学习这款非常优秀的VIO框架，原git库地址https://github.com/HKUST-Aerial-Robotics/VINS-Mono
+# VINS-Mono_CC_Comments
 
-关于代码的注释会不定期更新，欢迎关注
+## Introduction
 
-如果本仓库对你有用，欢迎star一下满足本人的虚荣心～
+这是 [VINS-Mono](https://github.com/HKUST-Aerial-Robotics/VINS-Mono) 开源代码的详细中文注释版本。
 
-PS：Momenta 语义slam，多传感器融合，自动标定还有大量HC，有意向同学可以联系xieqi@momenta.ai
+## Done
+
+- 除回环外的绝大部分代码都已经看完并注释
+
+## TODO
+
+- [ ] 学习回环检测部分内容，并注释代码
+- [ ] 整理VINS-Mono的手写笔记成电子版，并发布
+
+## Acknowledgements
+
+- [VINS-Mono-noted](https://github.com/xieqi1/VINS-Mono-noted)
+
+- [VINS-Mono](https://github.com/HKUST-Aerial-Robotics/VINS-Mono)
+
+  
+----
 
 # VINS-Mono
+
 ## A Robust and Versatile Monocular Visual-Inertial State Estimator
 
 **11 Jan 2019**: An extension of **VINS**, which supports stereo cameras / stereo cameras + IMU / mono camera + IMU, is published at [VINS-Fusion](https://github.com/HKUST-Aerial-Robotics/VINS-Fusion)
@@ -90,7 +107,7 @@ Download [EuRoC MAV Dataset](http://projects.asl.ethz.ch/datasets/doku.php?id=km
     roslaunch benchmark_publisher publish.launch  sequence_name:=MH_05_difficult
 ```
  (Green line is VINS result, red line is ground truth). 
- 
+
 3.1.3 (Optional) You can even run EuRoC **without extrinsic parameters** between camera and IMU. We will calibrate them online. Replace the first command with:
 ```
     roslaunch vins_estimator euroc_no_extrinsic_param.launch

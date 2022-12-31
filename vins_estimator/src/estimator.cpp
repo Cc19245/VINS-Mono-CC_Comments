@@ -1469,13 +1469,13 @@ void Estimator::slideWindowOld()
     {
         Matrix3d R0, R1;
         Vector3d P0, P1;
-        // back_R0 back_P0是被移除的帧的位姿
+        // back_R0 back_P0 是被移除的帧的位姿
         //; 下面的操作就是计算 移除滑出的帧 和 当前滑窗中的第0帧 的相机系位姿，
         //; 因为滑窗中维护的都是IMU系的位姿，而和3d点有关的是在相机系下的位姿
         R0 = back_R0 * ric[0];  // 上一次被移除的相机的姿态
         R1 = Rs[0] * ric[0];    // 当前滑窗中最老的相机姿态
-        P0 =  + back_R0 * tic[0];    // 被移除的相机的位置
-        P1 = Psback_P0[0] + Rs[0] * tic[0];    // 当前最老的相机位置
+        P0 = back_P0 + back_R0 * tic[0];    // 被移除的相机的位置
+        P1 = Ps[0] + Rs[0] * tic[0];    // 当前最老的相机位置
 
         // 下面要做的事情把被移除帧看见地图点的管理权交给当前的最老帧
         f_manager.removeBackShiftDepth(R0, P0, R1, P1);

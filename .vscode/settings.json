@@ -142,5 +142,13 @@
 		"core": "cpp",
 		"*.ipp": "cpp"
 	},
-	"ros.distro": "melodic"
+    "ros.distro": "melodic",
+    "python.autoComplete.extraPaths": [
+        "/home/cc/slam_dev/hardware_driver/livox_driver/devel/lib/python2.7/dist-packages",
+        "/opt/ros/melodic/lib/python2.7/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/cc/slam_dev/hardware_driver/livox_driver/devel/lib/python2.7/dist-packages",
+        "/opt/ros/melodic/lib/python2.7/dist-packages"
+    ]
 }
